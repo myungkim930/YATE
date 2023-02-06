@@ -18,11 +18,11 @@ model = YATE_Encode(
 )
 model = model.to(device)
 
-n_batch = 100
+n_batch = 10
 num_hops = 1
-n_epoch = 500
+n_epoch = 100
 n_pos = 5
-n_neg = 2
+n_neg = 1
 
 weight = torch.tensor(
     [
@@ -36,15 +36,11 @@ optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.01)
 criterion = torch.nn.CrossEntropyLoss(weight=weight)
 scheduler2 = optim.lr_scheduler.LinearLR(optimizer)
 
-T_0 = int(main_data.edgelist_total.size()[1] / n_batch * n_epoch)
+T_0 = int(main_data.edge_index.size()[1] / n_batch * n_epoch)
 scheduler1 = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0)
 
 ent_list = main_data.edge_index[0, :]
 idx_data = DataLoader(ent_list, batch_size=n_batch, shuffle=True)
-
-# ## train
-# temp = next(iter(idx_data))
-# idx_cen = temp.clone()
 
 model.train()
 
@@ -53,15 +49,15 @@ for _ in range(n_epoch):
     with tqdm(n_epoch, desc="(T)") as pbar:
 
         for idx in idx_data:
-
+            
             data = make_batch(
-                idx_cen=idx_cen,
+                idx_cen=idx,
                 num_hops=num_hops,
                 main_data=main_data,
                 n_pos=n_pos,
                 per_pos=0.8,
                 n_neg=n_neg,
-                per_neg=0.8,
+                per_neg=0.9,
             )
 
             data = data.to(device)
@@ -76,19 +72,23 @@ for _ in range(n_epoch):
             optimizer.step()
             scheduler1.step()
 
-        pbar.set_postfix({"loss": loss})
-        pbar.update()
+            pbar.set_postfix({"loss": loss})
+            pbar.update()
 
         scheduler2.step()
 
-    for _ in range(n_epoch):
 
-        optimizer.zero_grad()
+# torch.save(model, '/storage/store3/work/mkim/gitlab/YATE/models/saved_model/toy1.pickle')
 
-        # target = torch.reshape(data.y, (data.y.size()[0], 1))
 
-        pbar.set_postfix({"loss": loss})
-        pbar.update()
+# for _ in range(n_epoch):
+
+#     optimizer.zero_grad()
+
+#     # target = torch.reshape(data.y, (data.y.size()[0], 1))
+
+#     pbar.set_postfix({"loss": loss})
+#     pbar.update()
 
 
 # device = "cpu"
@@ -106,3 +106,7 @@ for _ in range(n_epoch):
 # for p,n in zip(rnn.parameters(),rnn._all_weights[0]):
 #     if n[:6] == 'weight':
 #         print('===========\ngradient:{}\n----------\n{}'.format(n,p.grad))
+
+# ## train
+# temp = next(iter(idx_data))
+# idx_cen = temp.clone()

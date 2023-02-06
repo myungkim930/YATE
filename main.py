@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
@@ -13,6 +12,7 @@ import os
 
 def ddp_setup():
     init_process_group(backend="nccl")
+
 
 class Trainer:
     def __init__(
@@ -52,7 +52,9 @@ class Trainer:
 
     def _run_epoch(self, epoch):
         b_sz = len(next(iter(self.train_data))[0])
-        print(f"[GPU{self.gpu_id}] Epoch {epoch} | Batchsize: {b_sz} | Steps: {len(self.train_data)}")
+        print(
+            f"[GPU{self.gpu_id}] Epoch {epoch} | Batchsize: {b_sz} | Steps: {len(self.train_data)}"
+        )
         self.train_data.sampler.set_epoch(epoch)
         for source, targets in self.train_data:
             source = source.to(self.gpu_id)
@@ -87,41 +89,22 @@ def prepare_dataloader(dataset: Dataset, batch_size: int):
         batch_size=batch_size,
         pin_memory=True,
         shuffle=False,
-        sampler=DistributedSampler(dataset)
+        sampler=DistributedSampler(dataset),
     )
 
 
-def main(save_every: int, total_epochs: int, batch_size: int, snapshot_path: str = "snapshot.pt"):
+def main(
+    save_every: int,
+    total_epochs: int,
+    batch_size: int,
+    snapshot_path: str = "snapshot.pt",
+):
     ddp_setup()
     dataset, model, optimizer = load_train_objs()
     train_data = prepare_dataloader(dataset, batch_size)
     trainer = Trainer(model, train_data, optimizer, save_every, snapshot_path)
     trainer.train(total_epochs)
     destroy_process_group()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # Set directories
