@@ -12,9 +12,7 @@ from typing import List, Tuple, Union, Optional
 import torch
 from torch import Tensor
 from torch_geometric.typing import Adj
-from torch_geometric.utils import scatter
 from torch_geometric.utils import index_to_mask
-from torch_geometric.loader import DataLoader
 
 ## K-hop Subgraph Extraction
 def k_hop_subgraph(
@@ -22,15 +20,19 @@ def k_hop_subgraph(
     num_hops: int,
     edge_index: Adj,
     edge_type: Union[int, List[int], Tensor],
+    flow: str = "target_to_source",
 ) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
     r"""Computes the induced subgraph of :obj:`edge_index` around all nodes in
     :attr:`node_idx` reachable within :math:`k` hops.
     """
 
     num_nodes = edge_index.max().item() + 1
-    cen_node = node_idx
 
-    col, row = edge_index
+    assert flow in ["source_to_target", "target_to_source"]
+    if flow == "target_to_source":
+        row, col = edge_index
+    else:
+        col, row = edge_index
 
     node_mask = row.new_empty(num_nodes, dtype=torch.bool)
     edge_mask = row.new_empty(row.size(0), dtype=torch.bool)
@@ -61,9 +63,9 @@ def k_hop_subgraph(
 
     # mapping = torch.vstack((edge_index.unique(), torch.argsort(edge_index.unique())))
 
-    mapping = torch.reshape(torch.tensor((cen_node, 0)), (2, 1))
+    mapping = torch.reshape(torch.tensor((node_idx, 0)), (2, 1))
     mapping_temp = torch.vstack(
-        (subset[subset != cen_node], torch.arange(1, subset.size()[0]))
+        (subset[subset != node_idx], torch.arange(1, subset.size()[0]))
     )
     mapping = torch.hstack((mapping, mapping_temp))
 
@@ -128,7 +130,11 @@ def feature_extract_lm(
 
         x = [
             main_data.x_model.get_sentence_vector(
-                x.replace("_", " ").replace("<", "").replace(">", "").lower()
+                x.replace("_", " ")
+                .replace("<", "")
+                .replace("\n", "")
+                .replace(">", "")
+                .lower()
             )
             for x in gent_names
         ]
@@ -150,6 +156,7 @@ def feature_extract_lm(
             main_data.x_model.get_sentence_vector(
                 re.sub(r"\B([A-Z])", r" \1", x)
                 .replace("_", " ")
+                .replace("\n", "")
                 .replace("<", "")
                 .replace(">", "")
                 .lower()
