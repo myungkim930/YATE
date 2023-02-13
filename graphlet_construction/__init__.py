@@ -8,6 +8,7 @@ from .gc_utils import (
     add_self_loops,
     to_undirected,
     remove_duplicates,
+    to_directed,
 )
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "add_self_loops",
     "to_undirected",
     "remove_duplicates",
+    "to_directed",
 ]
 
 classes = __all__
