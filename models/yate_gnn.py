@@ -12,8 +12,12 @@ import torch.nn as nn
 
 # PyTorch Geometric
 from torch_geometric.typing import Adj
-from torch_geometric.utils import softmax, to_undirected
+from torch_geometric.utils import softmax
 from torch_scatter import scatter
+
+# From YATE
+from graphlet_construction import to_undirected
+
 
 #########################
 ## Necessary functions ##
@@ -27,7 +31,7 @@ def yate_att_calc(edge_index: Adj, query: Adj, key: Adj):
     attention = torch.sum(
         torch.mul(query[edge_index[0, :], :], key), dim=1
     ) / math.sqrt(num_emb)
-    attention = softmax(attention, edge_index[1, :])
+    attention = softmax(attention, edge_index[0, :])
 
     return attention
 
@@ -36,7 +40,7 @@ def yate_att_calc(edge_index: Adj, query: Adj, key: Adj):
 def yate_att_output(edge_index: Adj, attention: Adj, value: Adj):
 
     output = scatter(
-        torch.mul(attention, value.t()).t(), edge_index[1, :], dim=0, reduce="sum"
+        torch.mul(attention, value.t()).t(), edge_index[0, :], dim=0, reduce="sum"
     )
 
     return output
@@ -146,7 +150,12 @@ class YATE_Attention(nn.Module):
         value = self.lin_value(Z)
 
         output, attention = yate_multihead(
-            edge_index, query, key, value, num_heads=self.num_heads, concat=self.concat
+            edge_index=edge_index,
+            query=query,
+            key=key,
+            value=value,
+            num_heads=self.num_heads,
+            concat=self.concat,
         )
 
         edge_attr = self.lin_edge(Z)
@@ -162,10 +171,11 @@ class YATE_Block(nn.Module):
     def __init__(
         self,
         input_dim: int,
-        emb_dim: int,
+        ff_dim: int,
         num_heads: int = 1,
         concat: bool = True,
-        dropout=0.1,
+        dropout=0.3,
+        read_out: bool = False,
     ):
 
         super().__init__()
@@ -175,18 +185,20 @@ class YATE_Block(nn.Module):
 
         # Two-layer MLP
         self.linear_net_x = nn.Sequential(
-            nn.Linear(input_dim, emb_dim),
+            nn.Linear(input_dim, ff_dim),
             nn.Dropout(dropout),
             nn.ReLU(inplace=True),
-            nn.Linear(emb_dim, input_dim),
+            nn.Linear(ff_dim, input_dim),
         )
 
-        self.linear_net_e = nn.Sequential(
-            nn.Linear(input_dim, emb_dim),
-            nn.Dropout(dropout),
-            nn.ReLU(inplace=True),
-            nn.Linear(emb_dim, input_dim),
-        )
+        self.readout = read_out
+        if self.readout == False:
+            self.linear_net_e = nn.Sequential(
+                nn.Linear(input_dim, ff_dim),
+                nn.Dropout(dropout),
+                nn.ReLU(inplace=True),
+                nn.Linear(ff_dim, input_dim),
+            )
 
         # Layers to apply in between the main layers for x and edges
         self.norm1_x = nn.LayerNorm(input_dim)
@@ -205,19 +217,20 @@ class YATE_Block(nn.Module):
         attn_out_x, attn_out_e = self.g_attn(x, edge_index, edge_attr)
 
         x = x + attn_out_x
-        # x = self.norm1_x(x)
+        x = self.norm1_x(x)
 
         edge_attr = edge_attr + attn_out_e
-        # edge_attr = self.norm1_e(edge_attr)
+        edge_attr = self.norm1_e(edge_attr)
 
         # MLP part
         linear_out_x = self.linear_net_x(x)
         x = x + linear_out_x
         x = self.norm2_x(x)
 
-        linear_out_e = self.linear_net_e(edge_attr)
-        edge_attr = edge_attr + linear_out_e
-        edge_attr = self.norm2_e(edge_attr)
+        if self.readout == False:
+            linear_out_e = self.linear_net_e(edge_attr)
+            edge_attr = edge_attr + linear_out_e
+            edge_attr = self.norm2_e(edge_attr)
 
         return x, edge_attr
 
@@ -229,7 +242,7 @@ class YATE_Block(nn.Module):
 
 ## YATE - encoding block with several layers and the final classification layer
 class YATE_Encode(nn.Module):
-    def __init__(self, input_dim, emb_dim, output_dim, num_layers, **block_args):
+    def __init__(self, input_dim, hidden_dim, num_layers, **block_args):
 
         super(YATE_Encode, self).__init__()
 
@@ -241,22 +254,25 @@ class YATE_Encode(nn.Module):
         )
 
         self.layers = nn.ModuleList(
-            [YATE_Block(input_dim, emb_dim, **block_args) for _ in range(num_layers)]
+            [YATE_Block(input_dim, **block_args) for _ in range(num_layers)]
         )
+
+        self.readout_layer = YATE_Block(input_dim, read_out=True, **block_args)
 
         self.classifier = nn.Sequential(
-            nn.Linear(input_dim, output_dim),
+            nn.Linear(input_dim, hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(output_dim, 2),
+            nn.Linear(hidden_dim, 2),
         )
 
-    def forward(self, input):
+    def forward(self, input, return_attention=False):
 
         # Define the appropriate vars
-        x, edge_index, edge_attr, head_idx = (
+        x, edge_index, edge_attr, edge_type, head_idx = (
             input.x,
             input.edge_index,
             input.edge_attr,
+            input.edge_type,
             input.head_idx,
         )
 
@@ -264,12 +280,24 @@ class YATE_Encode(nn.Module):
         edge_attr = self.linear_initial_e(edge_attr)
 
         # change edge_index and edge_feat to undirected
-        edge_index_ud, edge_attr_ud = to_undirected(
-            edge_index=edge_index, edge_attr=edge_attr, reduce="mean"
+        edge_index_ud, _, edge_attr_ud = to_undirected(
+            edge_index=edge_index,
+            edge_type=edge_type,
+            edge_attr=edge_attr,
         )
+
+        if return_attention:
+            attention_maps = []
+            for l in self.layers:
+                _, _, attention = l.g_attn(
+                    x, edge_index_ud, edge_attr_ud, return_attention
+                )
+                attention_maps.append(attention)
 
         for l in self.layers:
             x, edge_attr_ud = l(x, edge_index_ud, edge_attr_ud)
+
+        x, edge_attr = self.readout_layer(x, edge_index_ud, edge_attr_ud)
 
         # Extract representations of central entities
         x = x[head_idx, :]
@@ -277,4 +305,15 @@ class YATE_Encode(nn.Module):
         # Apply a final classifier
         x = self.classifier(x)
 
-        return x
+        if return_attention:
+            return x, attention_maps
+        else:
+            return x
+
+    # output, attention = yate_multihead(
+    #     edge_index=edge_index,
+    #     query=query,
+    #     key=key,
+    #     value=value,
+    #     num_heads=self.num_heads,
+    #     concat=self.concat,

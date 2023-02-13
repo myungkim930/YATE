@@ -56,7 +56,7 @@ def k_hop_subgraph(
     node_mask.fill_(False)
     node_mask[subset] = True
 
-    edge_mask = node_mask[row] & node_mask[col]
+    # edge_mask = node_mask[row] & node_mask[col]
     edge_index = edge_index[:, edge_mask]
 
     edge_type_new = edge_type[edge_mask]
@@ -181,19 +181,13 @@ def feature_extract_lm(
 def add_self_loops(
     edge_index: Adj,
     edge_type: Adj,
-    only_center: bool = False,
 ) -> Tuple[Tensor, Tensor]:
     r"""Adds a self-loop :math:`(i,i) \in \mathcal{E}` to every node
     :math:`i \in \mathcal{V}` in the graph given by :attr:`edge_index` or
     to the central node. Edgetype of self-loops will be added with '0'
     """
 
-    if only_center == True:
-        N = 1
-    elif only_center == False:
-        N = edge_index.max().item() + 1
-    else:
-        raise AttributeError("Valid input required")
+    N = edge_index.max().item() + 1
 
     loop_index = torch.arange(0, N, dtype=torch.long, device=edge_index.device)
     loop_index = loop_index.unsqueeze(0).repeat(2, 1)
@@ -204,3 +198,54 @@ def add_self_loops(
 
     edge_index = torch.cat([edge_index, loop_index], dim=1)
     return edge_index, edge_type
+
+
+## Remove duplicate function
+def remove_duplicates(edge_index: Adj, edge_type: Adj = None, edge_attr: Adj = None):
+
+    nnz = edge_index.size(1)
+    num_nodes = edge_index.max().item() + 1
+
+    idx = edge_index.new_empty(nnz + 1)
+    idx[0] = -1
+    idx[1:] = edge_index[0]
+    idx[1:].mul_(num_nodes).add_(edge_index[1])
+
+    if edge_type is not None:
+        idx[1:].add_(edge_type * (10 ** (len(str(num_nodes)) + 1)))
+
+    idx[1:], perm = torch.sort(
+        idx[1:],
+    )
+
+    mask = idx[1:] > idx[:-1]
+
+    edge_index = edge_index[:, perm]
+    edge_index = edge_index[:, mask]
+
+    if edge_type is not None:
+        edge_type, edge_attr = edge_type[perm], edge_attr[perm, :]
+        edge_type, edge_attr = edge_type[mask], edge_attr[mask, :]
+        return edge_index, edge_type, edge_attr
+    else:
+        return edge_index
+
+
+## To undirected function
+def to_undirected(edge_index: Adj, edge_type: Adj = None, edge_attr: Adj = None):
+
+    row = torch.cat([edge_index[0, :], edge_index[1, :]])
+    col = torch.cat([edge_index[1, :], edge_index[0, :]])
+
+    edge_index = torch.stack([row, col], dim=0)
+
+    if edge_type is not None:
+        edge_type = torch.cat([edge_type, edge_type])
+        edge_attr = torch.vstack((edge_attr, edge_attr))
+        edge_index, edge_type, edge_attr, _ = remove_duplicates(
+            edge_index=edge_index, edge_type=edge_type, edge_attr=edge_attr
+        )
+        return edge_index, edge_type, edge_attr
+    else:
+        edge_index = remove_duplicates(edge_index=edge_index)
+        return edge_index
