@@ -5,7 +5,7 @@ import torch
 import pickle
 
 # Need to make changes with numberical values. For now, keep numerical=False.
-
+# Need to fix for 2022 version
 
 def make_data_yago(data_name: str, numerical: bool = False, save: bool = False):
 
