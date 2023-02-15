@@ -229,9 +229,7 @@ def gen_neg(n_neg, per_neg, data, main_data, neg_set=None):
     nb_mark = 0
 
     if neg_set is None:
-        neg_set = np.setdiff1d(
-            range(main_data.edge_index.max().item() + 1), data.mapping[:, 0]
-        )
+        neg_set = np.setdiff1d(main_data.edge_index[1, :].unique(), data.mapping[:, 0])
 
     idx_neg = np.random.choice(
         neg_set, (n_neg, math.ceil(n_neighbor * per_neg)), replace=False
