@@ -303,11 +303,11 @@ class YATE_Encode(nn.Module):
         for l in self.layers:
             x, edge_attr_ud = l(x, edge_index_ud, edge_attr_ud)
 
-        edge_index, _, edge_attr = to_directed(
-            edge_index, edge_type, edge_index_ud, edge_type_ud, edge_attr_ud
-        )
+        # edge_index, _, edge_attr = to_directed(
+        #     edge_index, edge_type, edge_index_ud, edge_type_ud, edge_attr_ud
+        # )
 
-        x, _ = self.readout_layer(x, edge_index, edge_attr)
+        x, _ = self.readout_layer(x, edge_index_ud, edge_attr_ud)
 
         # Extract representations of central entities
         x = x[head_idx, :]

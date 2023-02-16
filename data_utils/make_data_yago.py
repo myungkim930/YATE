@@ -109,6 +109,7 @@ def make_data_yago(data_name: str, numerical: bool = False, save: bool = False):
         "ent2idx": ent2idx,
         "rel2idx": rel2idx,
         "headidx2type": headidx2type,
+        "type2idx": type2idx,
     }
 
     if save:
