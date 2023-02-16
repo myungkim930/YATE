@@ -7,6 +7,7 @@ import pickle
 # Need to make changes with numberical values. For now, keep numerical=False.
 # Need to fix for 2022 version
 
+
 def make_data_yago(data_name: str, numerical: bool = False, save: bool = False):
 
     data_folder_dir = os.getcwd() + "/data/raw/" + data_name + "/"
@@ -15,6 +16,7 @@ def make_data_yago(data_name: str, numerical: bool = False, save: bool = False):
     triplet_cat = pd.read_csv(
         triplet_cat_dir, sep="\t", header=0, usecols=[1, 2, 3], names=["h", "r", "t"]
     )
+    triplet_cat = triplet_cat.dropna()
 
     head_cat = triplet_cat["h"]
     tail_cat = triplet_cat["t"]
@@ -92,6 +94,7 @@ def make_data_yago(data_name: str, numerical: bool = False, save: bool = False):
     )
 
     types = types.drop_duplicates(subset=["h"])
+    types = types.dropna()
     ent2type = pd.concat([types["h"], types["t"].map(dict(type_map))], axis=1)
     ent2type = np.array(ent2type)
 
@@ -113,3 +116,5 @@ def make_data_yago(data_name: str, numerical: bool = False, save: bool = False):
 
         with open(save_dir, "wb") as pickle_file:
             pickle.dump(data, pickle_file)
+
+    # return data

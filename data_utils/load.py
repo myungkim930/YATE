@@ -42,16 +42,17 @@ class Load_data:
         if len(np.shape(self.ent2idx)) > 1:
             self.ent2idx = self.ent2idx[:, 0]
             self.rel2idx = self.rel2idx[:, 0]
-            
-    def reduce(self, num_rel:int = 10):
-        
-        head = np.array(self.edge_index[0,:])
+
+    def reduce(self, num_rel: int = 10):
+
+        head = np.array(self.edge_index[0, :])
         count = np.bincount(head)
-        idx = pd.DataFrame({'idx': np.where(count>num_rel-1)[0]})
-        mask_map = pd.concat([idx, pd.DataFrame(np.zeros((len(idx), 1))==0)], axis=1)
+        idx = pd.DataFrame({"idx": np.where(count > num_rel - 1)[0]})
+        mask_map = pd.concat([idx, pd.DataFrame(np.zeros((len(idx), 1)) == 0)], axis=1)
         mask_map = np.array(mask_map)
 
         mask = pd.DataFrame(head)[0].map(dict(mask_map))
         mask = np.array(mask.fillna(False))
 
-        self.edge_index = self.edge_index[:,mask]
+        self.edge_index = self.edge_index[:, mask]
+        self.edge_type = self.edge_type[mask]
