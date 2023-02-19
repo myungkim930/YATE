@@ -248,42 +248,29 @@ class YATE_Block(nn.Module):
 
 ## YATE - encoding block with several layers and the final classification layer
 class YATE_Encode(nn.Module):
-    def __init__(self, input_dim_x, input_dim_e, hidden_dim, num_layers, **block_args):
+    def __init__(
+        self, input_dim_x, input_dim_e, hidden_dim, n_class, num_layers, **block_args
+    ):
 
         super(YATE_Encode, self).__init__()
 
-        if input_dim_x != hidden_dim:
-            self.initial_x = nn.Sequential(
-                nn.Linear(input_dim_x, hidden_dim),
-                nn.Dropout(),
-                nn.ReLU(inplace=True),
-                nn.LayerNorm(hidden_dim),
-            )
-        else:
-            self.initial_x = nn.Identity()
-
-        self.initial_e = nn.Sequential(
-            nn.Linear(input_dim_e, hidden_dim),
+        self.linear_initial_e = nn.Sequential(
+            nn.Linear(input_dim_e, input_dim),
             nn.Dropout(),
             nn.ReLU(inplace=True),
-            nn.LayerNorm(hidden_dim),
+            nn.LayerNorm(input_dim_x),
         )
 
         self.layers = nn.ModuleList(
-            [
-                YATE_Block(input_dim=hidden_dim, **block_args)
-                for _ in range(num_layers - 1)
-            ]
+            [YATE_Block(input_dim_x, **block_args) for _ in range(num_layers)]
         )
 
-        self.readout_layer = YATE_Block(
-            input_dim=hidden_dim, read_out=True, **block_args
-        )
+        self.readout_layer = YATE_Block(input_dim_x, read_out=True, **block_args)
 
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(input_dim_x, hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, 2),
+            nn.Linear(hidden_dim, n_class),
         )
 
     def forward(self, input, return_attention=False):
@@ -297,12 +284,11 @@ class YATE_Encode(nn.Module):
             input.head_idx,
         )
 
-        # Initial layer for the node/edge features
-        x = self.initial_x(x)
-        edge_attr = self.initial_e(edge_attr)
+        # Initial layer for the edge features
+        edge_attr = self.linear_initial_e(edge_attr)
 
         # change edge_index and edge_feat to undirected
-        edge_index_ud, _, edge_attr_ud = to_undirected(
+        edge_index_ud, edge_type_ud, edge_attr_ud = to_undirected(
             edge_index=edge_index,
             edge_type=edge_type,
             edge_attr=edge_attr,

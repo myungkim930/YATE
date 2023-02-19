@@ -1,18 +1,14 @@
 ### Trainer for toy examples
 
-#
 import os
 import torch
 import datetime
 
 import numpy as np
 import torch.nn.functional as F
-
 import graphlet_construction as gc
 
 from torch.utils.data import DataLoader
-
-
 from models import YATE_Encode
 from data_utils import Load_data
 
@@ -32,20 +28,24 @@ class Trainer:
         output = self.model(data)
         target = data.y.type(torch.int64)
         weight = torch.tensor(
-            [1 - self.label_ratio, self.label_ratio], device=self.model.device
+            [1 - self.label_ratio, self.label_ratio], device=self.device
         )
         loss = F.cross_entropy(output, target, weight=weight)
+        self.loss = loss.clone()
         loss.backward()
         self.optimizer.step()
 
     def _run_epoch(self, epoch):
-        print(
-            f"[GPU{self.device.index}] Epoch {epoch} | Batchsize: {self.n_batch} | Loss: {round(self.loss.item(), 4)}"
-        )
+        print(f"[GPU{self.device.index}] Epoch {epoch} | Batchsize: {self.n_batch}")
+        batch_number = 0
         for idx in self.train_data:
             data = self.graphlet.make_batch(idx, *self.graphlet_setting)
             data = data.to(self.device)
             self._run_batch(data)
+            print(
+                f"[GPU{self.device.index}] Epoch {epoch} | Iteration: {batch_number}/{len(self.train_data)} | Loss: {round(self.loss.item(), 4)}"
+            )
+            batch_number += 1
 
     def _save_checkpoint(self, epoch):
         ckp = self.model.module.state_dict()
@@ -145,12 +145,13 @@ def main():
     exp_setting = load_train_objs(
         data_name="yago3",
         num_rel=10,
+        num_hops=1,
         num_pos=5,
         per_pos=0.8,
         num_neg=1,
         per_neg=0.8,
         max_nodes=100,
-        n_batch=100,
+        n_batch=32,
         n_epoch=50,
         save_every=1,
     )
