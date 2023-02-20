@@ -42,7 +42,7 @@ class Graphlet:
         cen_ent: int,
     ):
 
-        _, edgelist_new, edgetype_new, mapping = k_hop_subgraph(
+        edge_index, edge_type, mapping = k_hop_subgraph(
             edge_index=self.edge_index,
             node_idx=cen_ent,
             num_hops=self.num_hops,
@@ -50,18 +50,18 @@ class Graphlet:
             flow=self.flow,
         )
 
-        edgelist_new, edgetype_new = add_self_loops(
-            edge_index=edgelist_new, edge_type=edgetype_new
+        edge_index, edge_type = add_self_loops(
+            edge_index=edge_index, edge_type=edge_type
         )
 
         x, edge_feat = feature_extract_lm(
-            main_data=self.main_data, node_idx=mapping[0, :], edge_type=edgetype_new
+            main_data=self.main_data, node_idx=mapping[0, :], edge_type=edge_type
         )
 
         data = Data(
             x=x,
-            edge_index=edgelist_new,
-            edge_type=edgetype_new,
+            edge_index=edge_index,
+            edge_type=edge_type,
             edge_attr=edge_feat,
             y=1,
             g_idx=cen_ent,
@@ -83,7 +83,7 @@ class Graphlet:
         data = self.make_graphlet(cen_ent)
 
         if data.num_nodes > self.max_nodes:
-            g_temp = gen_pos(1, 100 / data.num_nodes, data)
+            g_temp = gen_pos(1, self.max_nodes / data.num_nodes, data)
             data = g_temp[0]
 
         g_p = gen_pos(self.n_pos, self.per_pos, data)

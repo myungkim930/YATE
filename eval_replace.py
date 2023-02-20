@@ -52,30 +52,22 @@ loss = criterion(output, target)
 model.classifier = torch.nn.Identity()
 output1 = model(data_batch)
 
-idx_head = main_data.edge_index[0,:].unique()
+idx_head = main_data.edge_index[0, :].unique()
 g = gc.Graphlet(main_data, num_hops=1)
+
+x = torch.zeros((idx_head.size(0), 300), device=device)
 
 for i in range(idx_head.size(0)):
     data = g.make_batch(int(idx_head[i]), aug=False)
     data.to(device)
-    output = model(data)
-
-    try:
-        x = torch.cat((x, output), dim=0)
-    except:
-        x = output
+    with torch.no_grad():
+        x[i,:] = model(data)
 
 
+Dataloader()
+torch.cuda.empty_cache()
 
-
-
-y = main_data.headidx2type[1,:]
-
-
-
-
-
-
+y = main_data.headidx2type[1, :]
 
 
 ############

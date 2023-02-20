@@ -21,7 +21,7 @@ def k_hop_subgraph(
     edge_index: Adj,
     edge_type: Union[int, List[int], Tensor],
     flow: str = "target_to_source",
-) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor, Tensor]:
     r"""Computes the induced subgraph of :obj:`edge_index` around all nodes in
     :attr:`node_idx` reachable within :math:`k` hops.
     """
@@ -50,8 +50,7 @@ def k_hop_subgraph(
         torch.index_select(node_mask, 0, row, out=edge_mask)
         subsets.append(col[edge_mask])
 
-    subset, inv = torch.cat(subsets).unique(return_inverse=True)
-    inv = inv[: node_idx.numel()]
+    subset, _ = torch.cat(subsets).unique(return_inverse=True)
 
     node_mask.fill_(False)
     node_mask[subset] = True
@@ -59,7 +58,7 @@ def k_hop_subgraph(
     edge_mask = node_mask[row] & node_mask[col]
     edge_index = edge_index[:, edge_mask]
 
-    edge_type_new = edge_type[edge_mask]
+    edge_type = edge_type[edge_mask]
 
     mapping = torch.reshape(torch.tensor((node_idx, 0)), (2, 1))
     mapping_temp = torch.vstack(
@@ -67,11 +66,11 @@ def k_hop_subgraph(
     )
     mapping = torch.hstack((mapping, mapping_temp))
 
-    edge_list_new = edge_index.clone()
-    for i in range(mapping.size()[1]):
-        edge_list_new[edge_index == mapping[0, i]] = mapping[1, i]
+    edge_index_new = edge_index.clone()
+    for i in range(mapping.size(1)):
+        edge_index_new[edge_index == mapping[0, i]] = mapping[1, i]
 
-    return edge_index, edge_list_new, edge_type_new, mapping
+    return edge_index_new, edge_type, mapping
 
 
 ## Subgraph with assigned nodes
