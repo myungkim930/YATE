@@ -6,6 +6,7 @@ Class for loading and setting data
 import pickle
 import fasttext
 import os
+import torch
 import numpy as np
 import pandas as pd
 
@@ -56,3 +57,7 @@ class Load_data:
 
         self.edge_index = self.edge_index[:, mask]
         self.edge_type = self.edge_type[mask]
+
+        mask_h = pd.DataFrame(self.headidx2type.T)[0].map(dict(mask_map))
+        mask_h = np.array(mask_h.fillna(False))
+        self.headidx2type = self.headidx2type[:, mask_h]
