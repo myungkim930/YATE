@@ -1,6 +1,5 @@
-from .gc_makeg import Graphlet
+from .gc_make_graphlet import Graphlet
 
-# from .gc_makebatch import make_batch
 from .gc_utils import (
     k_hop_subgraph,
     feature_extract_lm,

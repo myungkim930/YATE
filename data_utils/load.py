@@ -20,7 +20,7 @@ class Load_data:
 
         super(Load_data, self).__init__()
 
-        data_dir = os.getcwd() + "/data/preprocessed/" + data_name + ".pickle"
+        data_dir = os.getcwd() + "/data/processed/" + data_name + ".pickle"
 
         with open(data_dir, "rb") as pickle_file:
             data = pickle.load(pickle_file)
