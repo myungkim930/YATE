@@ -5,13 +5,16 @@ import torch
 import datetime
 import math
 
-from graphlet_construction import Graphlet
-
 from time import time
+
 from model import YATE_Encode
 from data_utils import Load_data
+from graphlet_construction import Graphlet
 from torch.utils.data import DataLoader
-from torch.optim.lr_scheduler import _LRScheduler
+
+# from torch.optim.lr_scheduler import _LRScheduler
+
+from train.utils import CosineAnnealingWarmUpRestarts, Index_extractor
 
 import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
@@ -95,7 +98,7 @@ class Trainer:
             "per_perturb_increase"
         ]
         self.perturb_window["step_perturb_change"] += self.perturb_window["step_diff"]
-        self.perturb_window["step_diff"] *= self.perturb_window["change_step_diff"]
+        # self.perturb_window["step_diff"] -= self.perturb_window["change_step_diff"]
 
     def _save_checkpoint(self, step):
         ckp = self.model.module.state_dict()
@@ -156,12 +159,12 @@ def load_train_objs(
             "n_perturb_replace": n_perturb_replace,
         }
     )
-
+    world_size = torch.cuda.device_count()
     exp_setting["perturb_window"] = dict(
         {
-            "step_perturb_change": 100000,
-            "step_diff": 200000,
-            "change_step_diff": 2,
+            "step_perturb_change": int(n_steps / world_size),
+            "step_diff": int(n_steps / world_size),
+            # "change_step_diff": int(100000 / world_size),
             "per_perturb_increase": 0.2,
         }
     )
@@ -176,7 +179,7 @@ def load_train_objs(
     exp_setting["graphlet"] = graphlet
 
     # set train for batch
-    idx_extract = Index_extractor(main_data, max_nodes=max_nodes)
+    idx_extract = Index_extractor(main_data)
     exp_setting["idx_extract"] = idx_extract
 
     # load your model
@@ -192,7 +195,7 @@ def load_train_objs(
     exp_setting["model"] = model
 
     # training settings
-    optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-5)
     exp_setting["optimizer"] = optimizer
 
     criterion_node = torch.nn.CrossEntropyLoss()
@@ -202,7 +205,12 @@ def load_train_objs(
     exp_setting["criterion_edge"] = criterion_edge
 
     scheduler = CosineAnnealingWarmUpRestarts(
-        optimizer, T_0=100000, T_mult=2, eta_max=1e-5, T_up=10000, gamma=0.8
+        optimizer,
+        T_0=int(n_steps / world_size),
+        T_mult=1,
+        eta_max=5e-5,
+        T_up=int(10000 / world_size),
+        gamma=0.9,
     )
     exp_setting["scheduler"] = scheduler
 
@@ -211,109 +219,17 @@ def load_train_objs(
     save_dir = (
         os.getcwd()
         + "/data/saved_model/"
+        + data_name
+        + "_"
         + now.strftime(
-            f"%d%m_NB{n_batch}_NS{n_steps}_NH{num_hops}_NP{n_perturb_mask+n_perturb_replace+1}"
+            f"%d%m_NB{n_batch}_NS{n_steps/10000}_NH{num_hops}_NP{n_perturb_mask+n_perturb_replace+1}"
         )
     )
     if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+        os.makedirs(save_dir, exist_ok=True)
     exp_setting["save_dir"] = save_dir
 
     return exp_setting
-
-
-## Index sampler according to the coverage of edge_index
-class Index_extractor:
-    def __init__(self, main_data):
-        self.main_data = main_data
-
-    def reset(self):
-        self.count_head = torch.bincount(self.main_data.edge_index[0, :])
-        self.count_head = self.count_head.to(torch.float)
-
-    def sample(self, n_batch: int):
-        if n_batch > self.count_head[self.count_head > 0].size(0):
-            self.idx_extract.reset()
-        idx_sample = torch.multinomial(self.count_head, n_batch)
-        idx_subtract_ = (
-            (torch.bincount(idx_sample) > 0).nonzero().view(-1).to(torch.long)
-        )
-        self.count_head[idx_subtract_] = (
-            self.count_head[idx_subtract_] - torch.bincount(idx_sample)[idx_subtract_]
-        )
-        return idx_sample
-
-
-## scheduler for the learning rate
-class CosineAnnealingWarmUpRestarts(_LRScheduler):
-    def __init__(
-        self, optimizer, T_0, T_mult=1, eta_max=0.1, T_up=0, gamma=1.0, last_epoch=-1
-    ):
-        self.T_0 = T_0
-        self.T_mult = T_mult
-        self.base_eta_max = eta_max
-        self.eta_max = eta_max
-        self.T_up = T_up
-        self.T_i = T_0
-        self.gamma = gamma
-        self.cycle = 0
-        self.T_cur = last_epoch
-        super(CosineAnnealingWarmUpRestarts, self).__init__(optimizer, last_epoch)
-
-    def get_lr(self):
-        if self.T_cur == -1:
-            return self.base_lrs
-        elif self.T_cur < self.T_up:
-            return [
-                (self.eta_max - base_lr) * self.T_cur / self.T_up + base_lr
-                for base_lr in self.base_lrs
-            ]
-        else:
-            return [
-                base_lr
-                + (self.eta_max - base_lr)
-                * (
-                    1
-                    + math.cos(
-                        math.pi * (self.T_cur - self.T_up) / (self.T_i - self.T_up)
-                    )
-                )
-                / 2
-                for base_lr in self.base_lrs
-            ]
-
-    def step(self, epoch=None):
-        if epoch is None:
-            epoch = self.last_epoch + 1
-            self.T_cur = self.T_cur + 1
-            if self.T_cur >= self.T_i:
-                self.cycle += 1
-                self.T_cur = self.T_cur - self.T_i
-                self.T_i = (self.T_i - self.T_up) * self.T_mult + self.T_up
-        else:
-            if epoch >= self.T_0:
-                if self.T_mult == 1:
-                    self.T_cur = epoch % self.T_0
-                    self.cycle = epoch // self.T_0
-                else:
-                    n = int(
-                        math.log(
-                            (epoch / self.T_0 * (self.T_mult - 1) + 1), self.T_mult
-                        )
-                    )
-                    self.cycle = n
-                    self.T_cur = epoch - self.T_0 * (self.T_mult**n - 1) / (
-                        self.T_mult - 1
-                    )
-                    self.T_i = self.T_0 * self.T_mult ** (n)
-            else:
-                self.T_i = self.T_0
-                self.T_cur = epoch
-
-        self.eta_max = self.base_eta_max * (self.gamma**self.cycle)
-        self.last_epoch = math.floor(epoch)
-        for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
-            param_group["lr"] = lr
 
 
 ##############
@@ -327,7 +243,7 @@ def main(rank: int, world_size: int):
         n_perturb_replace=2,
         max_nodes=100,
         n_batch=64,
-        n_steps=1500000,
+        n_steps=int(1000000 / world_size),
         save_every=10000,
     )
     ddp_setup(rank, world_size)

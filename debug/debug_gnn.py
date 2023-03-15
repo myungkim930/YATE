@@ -78,7 +78,6 @@ output, attention = yate_multihead(
     concat=True,
 )
 
-
 # We can feed-forward this in the attention layer
 from model.yate_gnn import YATE_Attention as YA
 
@@ -106,14 +105,27 @@ data = g.make_batch(idx_cen=idx, aug=False)
 print(data)
 output = model(data)
 
-
 #%%
 
-# Checking the gnn model
+import os
+
+os.chdir("/storage/store3/work/mkim/gitlab/YATE")
+
+# Checking the gnn model + training
 from model.yate_gnn import YATE_Encode as YE
 import torch
 import graphlet_construction as gc
 from torch import optim
+from torchinfo import summary
+
+# load data
+from data_utils import Load_data
+
+data_name = "yago3"  # others - yago3 'yago3_2022'
+main_data = Load_data(data_name)
+
+# set device
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 # load model
 model = YE(
@@ -123,19 +135,9 @@ model = YE(
     edge_class_dim=len(main_data.rel2idx),
     num_layers=12,
     ff_dim=300,
-    num_heads=1,
+    num_heads=6,
 )
-
-# load data
-n_batch = 64
-g = gc.Graphlet(main_data, num_hops=2, max_nodes=200)
-idx_head = main_data.edge_index[0, :].unique()
-idx_cen = idx_head[torch.randperm(idx_head.size()[0])][0:n_batch]
-data_batch = g.make_batch(cen_idx=idx_cen, n_perturb_mask=1, n_perturb_replace=2)
-
-# send model and data to gpu
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-data_batch.to(device)
+summary(model)
 model = model.to(device)
 
 # criterion (loss form) for node and edges / learning rate
@@ -143,18 +145,51 @@ criterion_node = torch.nn.CrossEntropyLoss()
 criterion_edge = torch.nn.CrossEntropyLoss()
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
 
-# output
-output_x, output_edge_attr = model(data_batch)
+g = gc.Graphlet(main_data, num_hops=2, max_nodes=100)
+idx_head = main_data.edge_index[0, :].unique()
 
-# targets
-target_node = data_batch.y
-target_edge = data_batch.edge_type[data_batch.idx_perturb]
 
-# loss on nodes and edges
-loss_node = criterion_edge(output_x, target_node)
-loss_edge = criterion_edge(output_edge_attr, target_edge)
-loss = loss_node + loss_edge
-loss.backward()
+def test_training():
+
+    # load data
+    n_batch = 64
+    idx_cen = idx_head[torch.randperm(idx_head.size()[0])][0:n_batch]
+    data_batch = g.make_batch(cen_idx=idx_cen, n_perturb_mask=1, n_perturb_replace=2)
+    data_batch.to(device)
+
+    # output
+    output_x, output_edge_attr = model(data_batch)
+
+    # targets
+    target_node = data_batch.y
+    target_edge = data_batch.edge_type[data_batch.idx_perturb]
+
+    # loss on nodes and edges
+    loss_node = criterion_edge(output_x, target_node)
+    loss_edge = criterion_edge(output_edge_attr, target_edge)
+    loss = loss_node + loss_edge
+    loss.backward()
+
+    optimizer.step()
+
+
+# %timeit test_training()
+
+import cProfile
+from pstats import SortKey
+
+with cProfile.Profile() as pf:
+    test_training()
+pf.print_stats(sort=SortKey.CUMULATIVE)
+# TIME
+
+# from torch.profiler import profile, record_function, ProfilerActivity
+
+# with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], with_stack=True) as prof:
+#     with record_function("test_training"):
+#         test_training()
+# print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+
 
 # checking the gradient flows
 for name, param in model.named_parameters():
@@ -163,5 +198,3 @@ for name, param in model.named_parameters():
 
 for name, param in model.named_parameters():
     print(name, param.grad.norm())
-
-optimizer.step()

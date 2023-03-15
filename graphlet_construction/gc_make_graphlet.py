@@ -1,6 +1,7 @@
 # Python
 import numpy as np
 import math
+import random
 from typing import List, Union
 
 # Pytorch
@@ -34,6 +35,16 @@ class Graphlet:
         self.num_hops = num_hops
         self.max_nodes = max_nodes
 
+        self.perturb_methods = ["mask_edge", "mask_node", "neg_edge", "neg_node"]
+        self.perturb_graphlet = dict(
+            {
+                "mask_edge": _perturb_mask_edge,
+                "mask_node": _perturb_mask_node,
+                "neg_edge": _perturb_replace_edge,
+                "neg_node": _perturb_replcae_node,
+            }
+        )
+
     def make_batch(
         self,
         cen_idx: Union[int, List[int], Tensor],
@@ -52,47 +63,40 @@ class Graphlet:
         tail_ = self.edge_index[1, :]
         node_mask = head_.new_empty(self.edge_index.max().item() + 1, dtype=torch.bool)
         node_mask.fill_(False)
-        reduce_mask = head_.new_empty(head_.size(0), dtype=torch.bool)
-        reduce_mask.fill_(False)
 
         subset = cen_idx
 
         for _ in range(self.num_hops):
             node_mask[subset] = True
-            reduce_mask = torch.index_select(node_mask, 0, head_)
-            subset = tail_[reduce_mask]
+            reduce_mask = node_mask[head_]
+            subset = tail_[reduce_mask].unique()
 
         self.edge_index_reduced = self.edge_index[:, reduce_mask]
         self.edge_type_reduced = self.edge_type[reduce_mask]
 
         # Obtain the list of data with original and perturbed graphs
         data_total = []
-        self.neg_edge_set = self.edge_type_reduced.unique()
         self.neg_node_set = self.edge_index_reduced.unique()
-        perturb_methods = ["mask_edge", "mask_node", "neg_edge", "neg_node"]
-
         for g_idx in range(len(cen_idx)):
             data_original_ = self._make_graphlet(node_idx=cen_idx[g_idx])
             data_original_.idx_perturb = torch.tensor([-1])
-            data_perturb_mask = [
-                self._perturb_graphlet(
+            method_ = random.choices(
+                self.perturb_methods[:2], k=n_perturb_mask
+            ) + random.choices(self.perturb_methods[2:], k=n_perturb_replace)
+            idx_perturb_ = (data_original_.edge_index[0, :] == 0).nonzero().view(-1)
+            n_perturb = math.ceil(per_perturb * idx_perturb_.size(0))
+            data_perturb_ = [
+                self.perturb_graphlet[method_[i]](
+                    main_data=self.main_data,
                     data=data_original_,
-                    method=perturb_methods[np.random.randint(0, 2)],
-                    per_perturb=per_perturb,
+                    neg_node_set=self.neg_node_set,
+                    idx_perturb=idx_perturb_,
+                    n_perturb=n_perturb,
                 )
-                for _ in range(n_perturb_mask)
+                for i in range(n_perturb_mask + n_perturb_replace)
             ]
-            data_perturb_replace = [
-                self._perturb_graphlet(
-                    data=data_original_,
-                    method=perturb_methods[np.random.randint(2, 4)],
-                    per_perturb=per_perturb,
-                )
-                for _ in range(n_perturb_replace)
-            ]
-            data_ = data_perturb_mask + data_perturb_replace
-            data_.insert(0, data_original_)
-            data_total = data_total + data_
+            data_perturb_.insert(0, data_original_)
+            data_total = data_total + data_perturb_
 
         # Form the batch with obtained graphlets
         makebatch = Batch()
@@ -188,56 +192,145 @@ class Graphlet:
 
         return data_out
 
-    def _perturb_graphlet(
-        self,
-        data,
-        method: str,
-        per_perturb: float,
-    ):
 
-        # Obtain indexes for perturbation
-        idx_perturb_ = (data.edge_index[0, :] == 0).nonzero().view(-1)
-        n_candidate = idx_perturb_.size(0)
-        n_perturb = math.ceil(per_perturb * n_candidate)
-        idx_perturb_ = idx_perturb_[torch.randperm(n_candidate)[0:n_perturb]]
-        data_perturb = data.clone()
-        data_perturb.idx_perturb = idx_perturb_.clone()
+def _perturb_mask_edge(data, idx_perturb, n_perturb, **kwargs):
+    idx_perturb_ = idx_perturb[torch.randperm(idx_perturb.size(0))[0:n_perturb]]
+    data_perturb = data.clone()
+    data_perturb.idx_perturb = idx_perturb_
+    data_perturb.edge_attr[idx_perturb_, :] = torch.ones(
+        idx_perturb_.size(0), data_perturb.edge_attr.size(1)
+    )
+    data_perturb.y = torch.tensor([1])
+    return data_perturb
 
-        # Obtain Data class for the perturbed graphlet
-        if method == "mask_edge":
-            data_perturb.edge_attr[idx_perturb_, :] = torch.ones(
-                n_perturb, data_perturb.edge_attr.size(1)
-            )
-            data_perturb.y = torch.tensor([1])
-        elif method == "mask_node":
-            tail_idx_ = data_perturb.edge_index[1, idx_perturb_].unique()
-            data_perturb.x[tail_idx_, :] = -9e15 * torch.ones(
-                tail_idx_.size(0), data_perturb.x.size(1)
-            )
-            data_perturb.y = torch.tensor([1])
-        elif method == "neg_edge":
-            neg_edge_ = torch.ones(len(self.rel2idx))
-            neg_edge_[data_perturb.edge_type[idx_perturb_]] = 0
-            neg_edge_type = torch.multinomial(neg_edge_, n_perturb, replacement=True)
-            data_perturb.edge_attr[idx_perturb_, :] = feature_extract_lm(
-                self.main_data, edge_type=neg_edge_type
-            )
-            data_perturb.y = torch.tensor([0])
-        elif method == "neg_node":
-            neg_node_ = torch.bincount(
-                self.neg_node_set,
-            )
-            neg_node_[neg_node_ > 0] = 1
-            neg_node_[data_perturb.mapping[:, 0]] = 0
-            neg_node_ = neg_node_.type(torch.float)
-            neg_node_idx = torch.multinomial(neg_node_, n_perturb, replacement=True)
-            data_perturb.x[
-                data_perturb.edge_index[1, idx_perturb_], :
-            ] = feature_extract_lm(
-                self.main_data, node_idx=neg_node_idx, exclude_center=False
-            )
-            data_perturb.y = torch.tensor([0])
-        else:
-            print("error")
 
-        return data_perturb
+def _perturb_mask_node(data, idx_perturb, n_perturb, **kwargs):
+    idx_perturb_ = idx_perturb[torch.randperm(idx_perturb.size(0))[0:n_perturb]]
+    data_perturb = data.clone()
+    data_perturb.idx_perturb = idx_perturb_
+    tail_idx_ = data_perturb.edge_index[1, idx_perturb_].unique()
+    data_perturb.x[tail_idx_, :] = -9e15 * torch.ones(tail_idx_.size(0), data.x.size(1))
+    data_perturb.y = torch.tensor([1])
+    return data_perturb
+
+
+def _perturb_replace_edge(main_data, data, idx_perturb, n_perturb, **kwargs):
+    idx_perturb_ = idx_perturb[
+        torch.randperm(idx_perturb.size(0))[0 : (idx_perturb.size(0) - n_perturb + 1)]
+    ]
+    data_perturb = data.clone()
+    data_perturb.idx_perturb = idx_perturb_
+    neg_edge_ = np.setdiff1d(
+        torch.arange(len(main_data.rel2idx)), data.edge_type[idx_perturb_]
+    )
+    neg_edge_type = np.random.choice(neg_edge_, idx_perturb_.size(0), replace=True)
+    data_perturb.edge_attr[idx_perturb_, :] = feature_extract_lm(
+        main_data, edge_type=neg_edge_type
+    )
+    data_perturb.y = torch.tensor([0])
+    return data_perturb
+
+
+def _perturb_replcae_node(main_data, data, neg_node_set, idx_perturb, n_perturb):
+    idx_perturb_ = idx_perturb[
+        torch.randperm(idx_perturb.size(0))[0 : (idx_perturb.size(0) - n_perturb + 1)]
+    ]
+    data_perturb = data.clone()
+    data_perturb.idx_perturb = idx_perturb_
+    neg_node_ = np.setdiff1d(neg_node_set, data.mapping[:, 0])
+    neg_node_idx = np.random.choice(neg_node_, idx_perturb_.size(0), replace=True)
+    data_perturb.x[data_perturb.edge_index[1, idx_perturb_], :] = feature_extract_lm(
+        main_data, node_idx=neg_node_idx, exclude_center=False
+    )
+    data_perturb.y = torch.tensor([0])
+    return data_perturb
+
+
+# def _idx_perturb_mask(idx_perturb_, n_candidate, n_perturb):
+#     return idx_perturb_[torch.randperm(n_candidate)[0:n_perturb]]
+
+
+# def _idx_perturb_neg(idx_perturb_, n_candidate, n_perturb):
+#     return idx_perturb_[torch.randperm(n_candidate)[0 : (n_candidate - n_perturb)]]
+
+
+#######
+
+# self.neg_edge_set = self.edge_type_reduced.unique()
+
+# def _perturb_graphlet(
+#     self,
+#     data,
+#     method: str,
+#     per_perturb: float,
+# ):
+
+#     # Obtain indexes for perturbation
+#     idx_perturb_ = (data.edge_index[0, :] == 0).nonzero().view(-1)
+#     n_candidate = idx_perturb_.size(0)
+#     n_perturb = math.ceil(per_perturb * n_candidate)
+#     idx_perturb_ = idx_perturb_[torch.randperm(n_candidate)[0:n_perturb]]
+#     data_perturb = data.clone()
+#     data_perturb.idx_perturb = idx_perturb_.clone()
+
+#     # Obtain Data class for the perturbed graphlet
+#     if method == "mask_edge":
+#         data_perturb.edge_attr[idx_perturb_, :] = torch.ones(
+#             n_perturb, data_perturb.edge_attr.size(1)
+#         )
+#         data_perturb.y = torch.tensor([1])
+#     elif method == "mask_node":
+#         tail_idx_ = data_perturb.edge_index[1, idx_perturb_].unique()
+#         data_perturb.x[tail_idx_, :] = -9e15 * torch.ones(
+#             tail_idx_.size(0), data_perturb.x.size(1)
+#         )
+#         data_perturb.y = torch.tensor([1])
+#     elif method == "neg_edge":
+#         neg_edge_ = np.setdiff1d(
+#             torch.arange(len(self.rel2idx)), data_perturb.edge_type[idx_perturb_]
+#         )
+#         neg_edge_type = np.random.choice(neg_edge_, n_perturb, replace=True)
+#         data_perturb.edge_attr[idx_perturb_, :] = feature_extract_lm(
+#             self.main_data, edge_type=neg_edge_type
+#         )
+#         data_perturb.y = torch.tensor([0])
+#     elif method == "neg_node":
+#         neg_node_ = np.setdiff1d(self.neg_node_set, data_perturb.mapping[:, 0])
+#         neg_node_idx = np.random.choice(neg_node_, n_perturb, replace=True)
+#         data_perturb.x[
+#             data_perturb.edge_index[1, idx_perturb_], :
+#         ] = feature_extract_lm(
+#             self.main_data, node_idx=neg_node_idx, exclude_center=False
+#         )
+#         data_perturb.y = torch.tensor([0])
+#     else:
+#         print("error")
+
+#     return data_perturb
+# data_perturb_mask = [
+#     self._perturb_graphlet(
+#         data=data_original_,
+#         method=perturb_methods[np.random.randint(0, 2)],
+#         per_perturb=per_perturb,
+#     )
+#     for _ in range(n_perturb_mask)
+# ]
+# data_perturb_replace = [
+#     self._perturb_graphlet(
+#         data=data_original_,
+#         method=perturb_methods[np.random.randint(2, 4)],
+#         per_perturb=per_perturb,
+#     )
+#     for _ in range(n_perturb_replace)
+# ]
+# data_ = data_perturb_mask + data_perturb_replace
+# data_.insert(0, data_original_)
+
+# idx_keep = np.random.choice(
+#     mapping[1, 1 : edge_index.max().item()],
+#     self.max_nodes - 2,
+#     replace=False,
+# )
+# idx_keep = torch.tensor(idx_keep)
+# idx_keep = torch.hstack((idx_keep, mapping[1, [0, -1]]))
+# idx_keep, _ = torch.sort(idx_keep)

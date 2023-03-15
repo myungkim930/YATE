@@ -1,19 +1,8 @@
-#%% Setup
+#%% gc_utils
 
-# Set working directory
 import os
 
 os.chdir("/storage/store3/work/mkim/gitlab/YATE")
-
-# load data
-from data_utils import Load_data
-
-data_name = "yago3"  # others - 'yago3_2022'
-main_data = Load_data(data_name)
-
-#%% gc_utils
-
-# load modules
 import torch
 import graphlet_construction as gc
 
@@ -89,25 +78,52 @@ result = gc.to_directed(edge_index, edge_type, edge_index1, edge_type1, edge_att
 
 #%% gc_makeg
 
+import os
+
+os.chdir("/storage/store3/work/mkim/gitlab/YATE")
+
+# load data
+from data_utils import Load_data
+
+data_name = "yago3_2022"  # others - yago3 'yago3_2022'
+main_data = Load_data(data_name)
+
 # making graphlets
 import torch
 import graphlet_construction as gc
 
-g = gc.Graphlet(main_data, num_hops=2)
+g = gc.Graphlet(main_data, num_hops=2, max_nodes=100)
 idx_head = main_data.edge_index[0, :].unique()
 
 # single graphlet
-idx = idx_head[torch.randperm(idx_head.size()[0])][0]
+# idx = idx_head[torch.randperm(idx_head.size()[0])][0]
 # idx = 2859 # United States
-data = g.make_batch(cen_idx=idx, n_perturb_mask=0, n_perturb_replace=0)
+# data = g.make_batch(cen_idx=idx, n_perturb_mask=0, n_perturb_replace=0)
 
 # multiple graphlets in a batch with perturbations
-idx_cen = idx_head[torch.randperm(idx_head.size()[0])][0:128]
-data_batch = g.make_batch(cen_idx=idx_cen, n_perturb_mask=1, n_perturb_replace=2)
-
-# multiple graphlets in a batch without perturbation
+idx_cen = idx_head[torch.randperm(idx_head.size(0))][0:64]
 data_batch = g.make_batch(
-    cen_idx=idx_cen, max_nodes=100, n_perturb_mask=0, n_perturb_neg=0
+    cen_idx=idx_cen, per_perturb=0.8, n_perturb_mask=1, n_perturb_replace=2
 )
+
+from torch.profiler import profile, record_function, ProfilerActivity
+
+with profile(activities=[ProfilerActivity.CPU], with_stack=True) as prof:
+    with record_function("graphlet_construction"):
+        data_batch = g.make_batch(
+            cen_idx=idx_cen, n_perturb_mask=1, n_perturb_replace=2
+        )
+print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+
+import cProfile
+from pstats import SortKey
+
+with cProfile.Profile() as pf:
+    data_batch = g.make_batch(
+        cen_idx=idx_cen, per_perturb=0.8, n_perturb_mask=1, n_perturb_replace=2
+    )
+
+pf.print_stats(sort=SortKey.CUMULATIVE)
+
 
 # %%

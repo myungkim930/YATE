@@ -103,6 +103,22 @@ def make_data_yago(data_name: str, numerical: bool = False, save: bool = False):
     )
     headidx2type = torch.tensor(headidx2type)
 
+    idx_head = edge_index[0, :].unique()
+    head_, tail_ = edge_index[0], edge_index[1]
+    num_hops = 3
+    neighbor = dict({f"{i}_hop": dict() for i in range(1, num_hops + 1)})
+
+    for idx in idx_head:
+        subset = idx.clone()
+        node_mask = head_.new_empty(edge_index.max().item() + 1, dtype=torch.bool)
+        node_mask.fill_(False)
+        for i in range(num_hops):
+            node_mask[subset] = True
+            reduce_mask = node_mask[head_]
+            neighbor[f"{i+1}_hop"][str(int(idx))] = head_[reduce_mask].unique()
+            subset = tail_[reduce_mask].unique()
+        del reduce_mask
+
     data = {
         "edge_index": edge_index,
         "edge_type": edge_type,
@@ -110,10 +126,11 @@ def make_data_yago(data_name: str, numerical: bool = False, save: bool = False):
         "rel2idx": rel2idx,
         "headidx2type": headidx2type,
         "type2idx": type2idx,
+        "neighbor": neighbor,
     }
 
     if save:
-        save_dir = os.getcwd() + "/data/preprocessed/" + data_name + ".pickle"
+        save_dir = os.getcwd() + "/data/preprocessed/" + data_name + "n.pickle"
 
         with open(save_dir, "wb") as pickle_file:
             pickle.dump(data, pickle_file)

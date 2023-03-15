@@ -12,8 +12,6 @@ from model import YATE_Encode
 from data_utils import Load_data
 from torch.optim.lr_scheduler import _LRScheduler
 
-from loss import create_target_node, Infonce_loss
-
 ##############
 ## Trainer class
 class Trainer:
