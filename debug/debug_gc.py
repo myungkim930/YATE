@@ -85,7 +85,7 @@ os.chdir("/storage/store3/work/mkim/gitlab/YATE")
 # load data
 from data_utils import Load_data
 
-data_name = "yago3_2022"  # others - yago3 'yago3_2022'
+data_name = "yago3"  # others - yago3 'yago3_2022'
 main_data = Load_data(data_name)
 
 # making graphlets
@@ -101,6 +101,7 @@ idx_head = main_data.edge_index[0, :].unique()
 # data = g.make_batch(cen_idx=idx, n_perturb_mask=0, n_perturb_replace=0)
 
 # multiple graphlets in a batch with perturbations
+# idx_cen = idx_head[torch.randperm(idx_head.size(0))][0]
 idx_cen = idx_head[torch.randperm(idx_head.size(0))][0:64]
 data_batch = g.make_batch(
     cen_idx=idx_cen, per_perturb=0.8, n_perturb_mask=1, n_perturb_replace=2

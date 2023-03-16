@@ -133,7 +133,7 @@ model = YE(
     input_dim_e=300,
     hidden_dim=300,
     edge_class_dim=len(main_data.rel2idx),
-    num_layers=12,
+    num_layers=2,
     ff_dim=300,
     num_heads=6,
 )

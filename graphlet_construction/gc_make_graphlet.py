@@ -114,12 +114,19 @@ class Graphlet:
                     ]
                 )
 
-        edge_index, edge_type, edge_attr, idx_perturb = to_undirected(
+        edge_index, edge_type, edge_attr, idx_perturb = (
             data_batch_temp.edge_index,
             data_batch_temp.edge_type,
             data_batch_temp.edge_attr,
             data_batch_temp.idx_perturb[data_batch_temp.idx_perturb > -1],
         )
+
+        # edge_index, edge_type, edge_attr, idx_perturb = to_undirected(
+        #     data_batch_temp.edge_index,
+        #     data_batch_temp.edge_type,
+        #     data_batch_temp.edge_attr,
+        #     data_batch_temp.idx_perturb[data_batch_temp.idx_perturb > -1],
+        # )
 
         data_batch = Data(
             x=data_batch_temp.x,

@@ -70,9 +70,17 @@ def k_hop_subgraph(
     edge_index_new = torch.vstack((out_h, out_t))
 
     edge_index_new = torch.hstack(
-        (edge_index_new, torch.tensor(([0], [edge_index_new.max().item() + 1])))
+        (
+            edge_index_new,
+            torch.tensor(
+                (
+                    [0, edge_index_new.max().item() + 1],
+                    [edge_index_new.max().item() + 1, 0],
+                )
+            ),
+        )
     )
-    edge_type = torch.hstack((edge_type, torch.tensor([0])))
+    edge_type = torch.hstack((edge_type, torch.zeros(2, dtype=torch.long)))
 
     mapping = torch.hstack(
         (mapping, torch.tensor([[node_idx], [edge_index_new.max().item()]]))

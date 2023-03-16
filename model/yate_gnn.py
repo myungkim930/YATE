@@ -248,11 +248,12 @@ class YATE_Constrast(nn.Module):
 class YATE_Encode(nn.Module):
     def __init__(
         self,
-        input_dim_x,
-        input_dim_e,
-        hidden_dim,
-        edge_class_dim,
-        num_layers,
+        input_dim_x: int,
+        input_dim_e: int,
+        hidden_dim: int,
+        edge_class_dim: int,
+        num_layers: int,
+        contrast: bool = False,
         **block_args
     ):
 
@@ -282,11 +283,19 @@ class YATE_Encode(nn.Module):
             nn.Linear(hidden_dim, edge_class_dim),
         )
 
-        self.classifier_node = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, 2),
-        )
+        if contrast:
+            self.classifier_node = nn.Sequential(
+                nn.Linear(hidden_dim, 4 * hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(4 * hidden_dim, hidden_dim),
+                YATE_Constrast(),
+            )
+        else:
+            self.classifier_node = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.ReLU(inplace=True),
+                nn.Linear(hidden_dim, 2),
+            )
 
     def forward(self, input, return_attention=False):
 
