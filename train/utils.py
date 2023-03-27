@@ -4,6 +4,7 @@ import torch
 
 from torch.optim.lr_scheduler import _LRScheduler
 
+
 ## Index sampler according to the coverage of edge_index
 class Index_extractor:
     def __init__(self, main_data):
@@ -15,14 +16,57 @@ class Index_extractor:
 
     def sample(self, n_batch: int):
         if n_batch > self.count_head[self.count_head > 0].size(0):
-            self.idx_extract.reset()
+            self.reset()
         idx_sample = torch.multinomial(self.count_head, n_batch)
-        idx_subtract_ = (
-            (torch.bincount(idx_sample) > 0).nonzero().view(-1).to(torch.long)
+        self.count_head[idx_sample] -= 1
+        return idx_sample
+
+
+## Index sampler according to the coverage of edge_index (by type)
+class Index_extractor_type:
+    def __init__(self, main_data):
+        self.main_data = main_data
+        self.num_types = main_data.headidx2type[1].unique().size(0)
+        self.count_head = torch.bincount(main_data.edge_index[0])
+        self.count_head_type = dict()
+        for i in range(self.num_types):
+            temp = torch.zeros(self.count_head.size(0), dtype=torch.long)
+            temp[
+                main_data.headidx2type[0, main_data.headidx2type[1] == i]
+            ] = self.count_head[
+                main_data.headidx2type[0, main_data.headidx2type[1] == i]
+            ]
+            self.count_head_type[f"{i}"] = temp.to(torch.float)
+        self.count_head_type_original = self.count_head_type.copy()
+        self.head_type = 0
+
+    def reset(self):
+        self.count_head_type[f"{self.head_type}"] = self.count_head_type_original[
+            f"{self.head_type}"
+        ].clone()
+        # self.count_head = torch.bincount(self.main_data.edge_index[0, :])
+        # self.count_head = self.count_head.to(torch.float)
+
+    def sample(self, n_batch: int):
+        # self.count_head_type[f'{self.head_type}'].nonzero().size(0)
+        if n_batch > self.count_head_type[f"{self.head_type}"].nonzero().size(0):
+            self.reset()
+        idx_sample = torch.multinomial(
+            self.count_head_type[f"{self.head_type}"], n_batch
         )
-        self.count_head[idx_subtract_] = (
-            self.count_head[idx_subtract_] - torch.bincount(idx_sample)[idx_subtract_]
-        )
+        self.count_head_type[f"{self.head_type}"][idx_sample] -= 1
+
+        # idx_subtract_ = (
+        #     (torch.bincount(idx_sample) > 0).nonzero().view(-1).to(torch.long)
+        # )
+        # self.count_head[idx_subtract_] = (
+        #     self.count_head[idx_subtract_] - torch.bincount(idx_sample)[idx_subtract_]
+        # )
+
+        if self.head_type == self.num_types - 1:
+            self.head_type = 0
+        else:
+            self.head_type += 1
         return idx_sample
 
 

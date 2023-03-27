@@ -5,6 +5,7 @@ Functions that can be utilized in graphlet construction
 
 # Python
 import re
+import math
 import numpy as np
 from typing import List, Tuple, Union, Optional
 
@@ -18,6 +19,7 @@ from torch_geometric.utils import index_to_mask
 def k_hop_subgraph(
     node_idx: int,
     num_hops: int,
+    max_nodes: int,
     edge_index: Adj,
     edge_type: Union[int, List[int], Tensor],
 ) -> Tuple[Tensor, Tensor, Tensor]:
@@ -26,25 +28,37 @@ def k_hop_subgraph(
     """
 
     num_nodes = edge_index.max().item() + 1
-
     head, tail = edge_index
+
+    # node_mask = head.new_empty(num_nodes, dtype=torch.bool)
+    # node_mask.fill_(False)
+
+    # subset_ = int(node_idx)
+
+    # for _ in range(num_hops):
+    #     node_mask[subset_] = True
+    #     edge_mask = node_mask[head]
+    #     subset_ = tail[edge_mask]
+
     node_mask = head.new_empty(num_nodes, dtype=torch.bool)
-    node_mask.fill_(False)
+    reduce_mask_ = head.new_empty(edge_index.size(1), dtype=torch.bool)
+    reduce_mask_.fill_(False)
+    subset = int(node_idx)
+    limit = [int(math.ceil(max_nodes * 10 ** (-i))) for i in range(num_hops)]
 
-    # if isinstance(node_idx, (Tensor, list, tuple)):
-    #     node_idx = torch.tensor([node_idx], device=head.device).flatten()
-    # else:
-    #     node_idx = node_idx.to(head.device)
+    for i in range(num_hops):
+        node_mask.fill_(False)
+        node_mask[subset] = True
+        idx_rm = node_mask[head].nonzero().view(-1)
+        idx_rm = idx_rm[torch.randperm(idx_rm.size(0))[: limit[i]]]
+        reduce_mask_[idx_rm] = True
+        subset = tail[reduce_mask_].unique()
 
-    subset_ = int(node_idx)
+    edge_index = edge_index[:, reduce_mask_]
+    edge_type = edge_type[reduce_mask_]
 
-    for _ in range(num_hops):
-        node_mask[subset_] = True
-        edge_mask = node_mask[head]
-        subset_ = tail[edge_mask]
-
-    edge_index = edge_index[:, edge_mask]
-    edge_type = edge_type[edge_mask]
+    # edge_index = edge_index[:, edge_mask]
+    # edge_type = edge_type[edge_mask]
 
     subset = edge_index.unique()
 
@@ -80,7 +94,7 @@ def k_hop_subgraph(
             ),
         )
     )
-    edge_type = torch.hstack((edge_type, torch.zeros(2, dtype=torch.long)))
+    edge_type = torch.hstack((edge_type, torch.ones(2, dtype=torch.long)))
 
     mapping = torch.hstack(
         (mapping, torch.tensor([[node_idx], [edge_index_new.max().item()]]))
@@ -137,9 +151,9 @@ def subgraph(
 ## Add self-loop function
 def add_self_loops(
     edge_index: Adj,
+    edge_feat: Adj,
     edge_type=None,
-    exclude_center: bool = False,
-) -> Tuple[Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor, Tensor]:
     r"""Adds a self-loop :math:`(i,i) \in \mathcal{E}` to every node
     :math:`i \in \mathcal{V}` in the graph given by :attr:`edge_index` or
     to the central node. Edgetype of self-loops will be added with '0'
@@ -147,31 +161,20 @@ def add_self_loops(
 
     N = edge_index.max().item() + 1
 
-    if exclude_center:
-        loop_index = torch.arange(1, N, dtype=torch.long, device=edge_index.device)
-    else:
-        loop_index = torch.arange(0, N, dtype=torch.long, device=edge_index.device)
+    loop_index = torch.arange(0, N, dtype=torch.long, device=edge_index.device)
     loop_index = loop_index.unsqueeze(0).repeat(2, 1)
 
     edge_index = torch.cat([edge_index, loop_index], dim=1)
+    edge_feat = torch.vstack((edge_feat, torch.ones((N, edge_feat.size(1)))))
 
     if edge_type is not None:
-        if exclude_center:
-            edge_type = torch.cat(
-                [
-                    edge_type,
-                    torch.zeros(N - 1, dtype=torch.long, device=edge_index.device),
-                ],
-                dim=0,
-            )
-        else:
-            edge_type = torch.cat(
-                [edge_type, torch.zeros(N, dtype=torch.long, device=edge_index.device)],
-                dim=0,
-            )
-        return edge_index, edge_type
+        edge_type = torch.cat(
+            [edge_type, torch.zeros(N, dtype=torch.long, device=edge_index.device)],
+            dim=0,
+        )
+        return edge_index, edge_feat, edge_type
     else:
-        return edge_index
+        return edge_index, edge_feat
 
 
 ## Remove duplicate function
@@ -191,7 +194,7 @@ def remove_duplicates(
     idx[1:].mul_(num_nodes).add_(edge_index[1])
 
     if edge_type is not None:
-        idx[1:].add_(edge_type * (10 ** (len(str(num_nodes)) + 3)))
+        idx[1:].add_((edge_type + 1) * (10 ** (len(str(num_nodes)) + 3)))
 
     idx[1:], perm = torch.sort(
         idx[1:],
@@ -220,7 +223,7 @@ def to_undirected(
     edge_index: Adj,
     edge_type: Adj = None,
     edge_attr: Adj = None,
-    idx_perturb: Adj = None,
+    idx_perturb=None,
 ):
 
     row = torch.cat([edge_index[0, :], edge_index[1, :]])
@@ -249,7 +252,8 @@ def to_undirected(
                 edge_type=edge_type,
                 edge_attr=edge_attr,
             )
-        return edge_index, edge_type, edge_attr
+        idx_perturb = []
+        return edge_index, edge_type, edge_attr, idx_perturb
     else:
         edge_index = remove_duplicates(edge_index=edge_index)
         return edge_index
@@ -290,7 +294,7 @@ def feature_extract_lm(
     main_data,
     node_idx: Optional[Union[int, List[int], Tensor]] = None,
     edge_type: Optional[Union[int, List[int], Tensor]] = None,
-    exclude_center: bool = False,
+    control_center: bool = False,
 ):
     r"""Extracts node/edge features from language model."""
 
@@ -317,11 +321,9 @@ def feature_extract_lm(
         ]
 
         x = np.array(x)
-        x = torch.tensor(
-            x,
-        )
-        if exclude_center:
-            x[0, :] = -9e15 * torch.ones(x.size(1))
+        x = torch.tensor(x)
+        if control_center:
+            x = torch.vstack((torch.ones(x.size(1)), x))
 
     if edge_type is not None:
         if isinstance(edge_type, int):
@@ -356,13 +358,3 @@ def feature_extract_lm(
         return edge_feat
     elif (node_idx is not None) and (edge_type is not None):
         return x, edge_feat
-
-    # if edge_index[0].unique().size(0) > max_nodes:
-    #     candidate_keep = edge_index[0, :][edge_index[0, :] != node_idx].unique()
-    #     subset = np.random.choice(candidate_keep, max_nodes - 1, replace=False)
-    #     subset = torch.tensor(subset)
-    #     subset = torch.cat((torch.tensor([node_idx]), subset))
-    #     mask_keep = index_to_mask(subset, size=edge_index.max().item() + 1)
-    #     edge_index = edge_index[:, mask_keep[edge_index[0]]]
-    #     edge_type = edge_type[mask_keep[edge_index[0]]]
-    #     subset = edge_index.unique()
