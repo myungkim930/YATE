@@ -4,7 +4,6 @@ Functions that can be utilized in graphlet construction
 """
 
 # Python
-import re
 import math
 import numpy as np
 from typing import List, Tuple, Union, Optional
@@ -12,15 +11,14 @@ from typing import List, Tuple, Union, Optional
 # Pytorch
 import torch
 from torch import Tensor
-from torch_geometric.typing import Adj
-from torch_geometric.utils import index_to_mask
+
 
 ## K-hop Subgraph Extraction
 def k_hop_subgraph(
     node_idx: int,
     num_hops: int,
     max_nodes: int,
-    edge_index: Adj,
+    edge_index: Tensor,
     edge_type: Union[int, List[int], Tensor],
 ) -> Tuple[Tensor, Tensor, Tensor]:
     r"""Computes the induced subgraph of :obj:`edge_index` around all nodes in
@@ -29,16 +27,6 @@ def k_hop_subgraph(
 
     num_nodes = edge_index.max().item() + 1
     head, tail = edge_index
-
-    # node_mask = head.new_empty(num_nodes, dtype=torch.bool)
-    # node_mask.fill_(False)
-
-    # subset_ = int(node_idx)
-
-    # for _ in range(num_hops):
-    #     node_mask[subset_] = True
-    #     edge_mask = node_mask[head]
-    #     subset_ = tail[edge_mask]
 
     node_mask = head.new_empty(num_nodes, dtype=torch.bool)
     reduce_mask_ = head.new_empty(edge_index.size(1), dtype=torch.bool)
@@ -57,9 +45,6 @@ def k_hop_subgraph(
     edge_index = edge_index[:, reduce_mask_]
     edge_type = edge_type[reduce_mask_]
 
-    # edge_index = edge_index[:, edge_mask]
-    # edge_type = edge_type[edge_mask]
-
     subset = edge_index.unique()
 
     mapping = torch.reshape(torch.tensor((node_idx, 0)), (2, 1))
@@ -70,9 +55,6 @@ def k_hop_subgraph(
 
     head_ = edge_index[0, :]
     tail_ = edge_index[1, :]
-
-    # head_ = edge_index[0, :].clone()
-    # tail_ = edge_index[1, :].clone()
 
     sort_idx = torch.argsort(mapping[0, :])
     idx_h = torch.searchsorted(mapping[0, :], head_, sorter=sort_idx)
@@ -94,7 +76,7 @@ def k_hop_subgraph(
             ),
         )
     )
-    edge_type = torch.hstack((edge_type, torch.ones(2, dtype=torch.long)))
+    edge_type = torch.hstack((edge_type, torch.zeros(2, dtype=torch.long)))
 
     mapping = torch.hstack(
         (mapping, torch.tensor([[node_idx], [edge_index_new.max().item()]]))
@@ -118,16 +100,15 @@ def subgraph(
     if isinstance(subset, (list, tuple)):
         subset = torch.tensor(subset, dtype=torch.long, device=device)
 
-    subset = index_to_mask(subset, size=num_nodes)
+    subset_ = torch.zeros(num_nodes, dtype=torch.bool, device=device)
+    subset_[subset] = True
+    subset = subset_
 
     node_mask = subset
     edge_mask = node_mask[edge_index[0]] & node_mask[edge_index[1]]
     edge_index = edge_index[:, edge_mask]
 
     mapping = torch.vstack((edge_index.unique(), torch.argsort(edge_index.unique())))
-
-    # head_ = edge_index[0, :].clone()
-    # tail_ = edge_index[1, :].clone()
 
     head_ = edge_index[0, :]
     tail_ = edge_index[1, :]
@@ -141,17 +122,13 @@ def subgraph(
 
     edge_list_new = torch.vstack((out_h, out_t))
 
-    # edge_list_new = edge_index.clone()
-    # for i in range(mapping.size()[1]):
-    #     edge_list_new[edge_index == mapping[0, i]] = mapping[1, i]
-
     return edge_list_new, edge_mask, mapping
 
 
 ## Add self-loop function
 def add_self_loops(
-    edge_index: Adj,
-    edge_feat: Adj,
+    edge_index: Tensor,
+    edge_feat: Tensor,
     edge_type=None,
 ) -> Tuple[Tensor, Tensor, Tensor]:
     r"""Adds a self-loop :math:`(i,i) \in \mathcal{E}` to every node
@@ -179,12 +156,11 @@ def add_self_loops(
 
 ## Remove duplicate function
 def remove_duplicates(
-    edge_index: Adj,
-    edge_type: Adj = None,
-    edge_attr: Adj = None,
-    perturb_tensor: Adj = None,
+    edge_index: Tensor,
+    edge_type: Tensor = None,
+    edge_attr: Tensor = None,
+    perturb_tensor: Tensor = None,
 ):
-
     nnz = edge_index.size(1)
     num_nodes = edge_index.max().item() + 1
 
@@ -220,12 +196,11 @@ def remove_duplicates(
 
 ## To undirected function
 def to_undirected(
-    edge_index: Adj,
-    edge_type: Adj = None,
-    edge_attr: Adj = None,
+    edge_index: Tensor,
+    edge_type: Tensor = None,
+    edge_attr: Tensor = None,
     idx_perturb=None,
 ):
-
     row = torch.cat([edge_index[0, :], edge_index[1, :]])
     col = torch.cat([edge_index[1, :], edge_index[0, :]])
 
@@ -261,13 +236,12 @@ def to_undirected(
 
 ## To the original(directed) with
 def to_directed(
-    edge_index: Adj,
-    edge_type: Adj,
-    edge_index_mod: Adj,
-    edge_type_mod: Adj,
-    edge_attr_mod: Adj,
+    edge_index: Tensor,
+    edge_type: Tensor,
+    edge_index_mod: Tensor,
+    edge_type_mod: Tensor,
+    edge_attr_mod: Tensor,
 ):
-
     num_nodes = edge_index.max().item() + 1
     idx = edge_index[0].clone()
     idx.mul_(num_nodes).add_(edge_index[1]).add_(
@@ -289,6 +263,7 @@ def to_directed(
 
 ##############
 
+
 ## Word-Feature Extraction (Subject to change depending on the naming of entities/relations)
 def feature_extract_lm(
     main_data,
@@ -308,17 +283,7 @@ def feature_extract_lm(
 
         gent_names = main_data.ent2idx[node_idx]
 
-        x = [
-            main_data.x_model.get_sentence_vector(
-                re.sub(r"[a-z]{2,}/", "", x)
-                .replace("_", " ")
-                .replace("<", "")
-                .replace("\n", "")
-                .replace(">", "")
-                .lower()
-            )
-            for x in gent_names
-        ]
+        x = [main_data.x_model.get_sentence_vector(x) for x in gent_names]
 
         x = np.array(x)
         x = torch.tensor(x)
@@ -335,17 +300,7 @@ def feature_extract_lm(
 
         grel_names = main_data.rel2idx[edge_type]
 
-        edge_feat = [
-            main_data.x_model.get_sentence_vector(
-                re.sub(r"\B([A-Z])", r" \1", x)
-                .replace("_", " ")
-                .replace("\n", "")
-                .replace("<", "")
-                .replace(">", "")
-                .lower()
-            )
-            for x in grel_names
-        ]
+        edge_feat = [main_data.x_model.get_sentence_vector(x) for x in grel_names]
 
         edge_feat = np.array(edge_feat)
         edge_feat = torch.tensor(
@@ -358,3 +313,17 @@ def feature_extract_lm(
         return edge_feat
     elif (node_idx is not None) and (edge_type is not None):
         return x, edge_feat
+
+        # re.sub(r"[a-z]{2,}/", "", x)
+        # .replace("_", " ")
+        # .replace("<", "")
+        # .replace("\n", "")
+        # .replace(">", "")
+        # .lower()
+
+        # re.sub(r"\B([A-Z])", r" \1", x)
+        # .replace("_", " ")
+        # .replace("\n", "")
+        # .replace("<", "")
+        # .replace(">", "")
+        # .lower()
