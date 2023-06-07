@@ -162,14 +162,14 @@ class Table2Graph:
         edge_index_r = torch.vstack((tail, head))
 
         # Extract x (node features)
-        ent_names = data_cat
-        ent_names = (
-            ent_names.str.replace("<", "")
-            .str.replace(">", "")
-            .str.replace("_", " ")
-            .str.lower()
-        )
-        ent_names = np.array(ent_names)
+        # ent_names = data_cat
+        # ent_names = (
+        #     ent_names.str.replace("<", "")
+        #     .str.replace(">", "")
+        #     .str.replace("_", " ")
+        #     .str.lower()
+        # )
+        ent_names = np.array(data_cat)
 
         x = [self.lm_model.get_sentence_vector(str(x)) for x in ent_names]
         x = np.array(x)

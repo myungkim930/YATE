@@ -14,6 +14,8 @@ from graphlet_construction import Table2Graph
 # import data
 data_pd_dir = "/storage/store3/work/mkim/gitlab/YATE/data/eval_kg_data/raw/company_employees.parquet"
 data_pd = pd.read_parquet(data_pd_dir)
+data_pd = data_pd.drop(columns=["col_to_embed"])
+
 # data_pd["name"] = (
 #     data_pd["name"]
 #     .str.replace("<", "")
@@ -52,11 +54,11 @@ test_dataset = table2graph_transformer.transform(data_test)
 # YATE finetune regressor
 yate_ft = Yate_FineTune_Regressor(
     gpu_id=0,
-    learning_rate=3e-4,
+    learning_rate=3e-3,
     max_epoch=200,
-    early_stopping_patience=40,
+    early_stopping_patience=None,
     val_size=0.1,
-    batch_size=128,
+    batch_size=256,
     num_model=30,
     load_pretrain=True,
     freeze=True,
