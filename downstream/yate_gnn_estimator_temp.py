@@ -7,7 +7,10 @@ from typing import Union
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Batch
 
-from sklearn.preprocessing import power_transform, quantile_transform
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import QuantileTransformer
+
 
 from sklearn.model_selection import train_test_split
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
@@ -19,6 +22,9 @@ from joblib import Parallel, delayed
 from tqdm import tqdm
 
 from utils import load_config
+
+# from graphlet_construction import transform_table_to_graph
+from graphlet_construction import Table2GraphTransformer
 
 
 class BaseYateGNNEstimator(BaseEstimator):
@@ -63,6 +69,11 @@ class BaseYateGNNEstimator(BaseEstimator):
         self.X_ = X
         self.y_ = y
         self._set_task_specific_settings()
+        # self.table2graph_transformer_ = Table2GraphTransformer()
+
+        # Transform dataframe into list of graphs
+        # X = self.table2graph_transformer_.transform(X, y)
+        # X = transform_table_to_graph(X, y)
 
         if self.num_model == 1:
             _ = self._run_train(X, self.random_state)
@@ -81,10 +92,6 @@ class BaseYateGNNEstimator(BaseEstimator):
         return self
 
     def _run_train(self, X, random_state):
-        if self.include_numeric:
-            # Transform numericals
-            X = self._transform_numerical(X)
-
         # Set validation by val_size
         idx_train, idx_valid = train_test_split(
             np.arange(0, len(X)),
@@ -133,10 +140,6 @@ class BaseYateGNNEstimator(BaseEstimator):
         return valid_loss_best
 
     def _run_refit(self, X: list, result_valid_loss):
-        if self.include_numeric:
-            # Transform numericals
-            X = self._transform_numerical(X)
-
         # Load model and optimizer
         input_numeric_dim = X[0].x_num.size(1)
         model_run_refit = self._load_model(input_numeric_dim=input_numeric_dim)
@@ -147,9 +150,7 @@ class BaseYateGNNEstimator(BaseEstimator):
 
         # Statistics for stopping criterion in the refit
         # valid_loss_best = min(result_valid_loss)
-        valid_loss_mean = np.mean(
-            np.sort(result_valid_loss)[: int(self.num_model * 0.6)]
-        )
+        valid_loss_mean = np.mean(result_valid_loss)
         valid_loss_std = np.std(result_valid_loss) / np.sqrt(self.num_model)
 
         # Set train settings
@@ -220,18 +221,6 @@ class BaseYateGNNEstimator(BaseEstimator):
         self.criterion_ = None
         self.output_dim_ = None
         self.model_task_ = None
-
-    def _transform_numerical(self, X):
-        make_batch = Batch()
-        data_batch = make_batch.from_data_list(X, follow_batch=["edge_index"])
-        X_num = data_batch.x_num.cpu().detach().numpy()
-        X_num = X_num.astype(np.float64)
-        X_num = power_transform(X_num)
-        # X_num = quantile_transform(X=X_num, n_quantiles=100)
-        X_num = torch.tensor(X_num)
-        X_num = torch.nan_to_num(X_num, nan=0)
-        data_batch.x_num = X_num
-        return data_batch.to_data_list()
 
     def _load_model(self, input_numeric_dim: int):
         model_config = dict()
@@ -314,11 +303,9 @@ class YateGNNRegressor(RegressorMixin, BaseYateGNNEstimator):
     def predict(self, X):
         check_is_fitted(self, "is_fitted_")
 
-        if self.include_numeric:
-            # Transform numericals
-            X_total = self.X_ + X
-            X = self._transform_numerical(X_total)
-            X = X[len(self.X_) :]
+        # Transform the data into graphs
+        # X = self.table2graph_transformer_.transform(X)
+        # X = transform_table_to_graph(X)
 
         # Obtain the batch to feed into the network
         ds_predict_eval = self._set_data_eval(data=X)
@@ -398,11 +385,9 @@ class YateGNNClassifier(ClassifierMixin, BaseYateGNNEstimator):
         return self._get_predict_prob(X)
 
     def _get_predict_prob(self, X):
-        if self.include_numeric:
-            # Transform numericals
-            X_total = self.X_ + X
-            X = self._transform_numerical(X_total)
-            X = X[len(self.X_) :]
+        # Transform the data into graphs
+        # X = self.table2graph_transformer_.transform(X)
+        # X = transform_table_to_graph(X)
 
         # Obtain the batch to feed into the network
         ds_predict_eval = self._set_data_eval(data=X)
