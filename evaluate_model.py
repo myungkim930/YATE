@@ -143,7 +143,7 @@ def _run_model(
 
     # Optimization
     if "yate-gnn" in method:
-        refit, n_jobs = False, 25
+        refit, n_jobs = False, -1
         hyperparameter_search = GridSearchCV(
             estimator,
             param_grid=param_distributions,
@@ -165,7 +165,7 @@ def _run_model(
     elif "catboost" in method:
         hyperparameter_search = estimator
     else:
-        n_iter, refit, n_jobs = 1000, True, 25
+        n_iter, refit, n_jobs = 100, True, -1
         hyperparameter_search = RandomizedSearchCV(
             estimator,
             param_distributions=param_distributions,
@@ -314,7 +314,7 @@ def _prepare_yate_feature_based(
     else:
         X_train = yate_feat_extractor.extract(X_train, "pretrained", include_numeric)
         X_test = yate_feat_extractor.extract(X_test, "pretrained", include_numeric)
-    return X_train, X_test, y_train, y_test
+    return np.array(X_train), np.array(X_test), np.array(y_train), np.array(y_test)
 
 
 def _prepare_tablevectorizer(
@@ -329,6 +329,10 @@ def _prepare_tablevectorizer(
 
     data = data_pd.copy()
     if include_ken:
+        name_col = data_pd["name"]
+        name_col = "<" + name_col + ">"
+        name_col = name_col.str.replace(" ", "_")
+        data["name"] = name_col
         data_aug = data.merge(right=data_additional["ken"], how="inner", on="name")
         data = data_aug.copy()
     X_train, X_test, y_train, y_test = _set_split(
@@ -356,7 +360,7 @@ def _prepare_catboost(data_pd, target_name, cat_col_names, num_train, random_sta
         num_train,
         random_state=random_state,
     )
-    return X_train, X_test, y_train, y_test
+    return np.array(X_train), np.array(X_test), np.array(y_train), np.array(y_test)
 
 
 def _assign_estimator(
