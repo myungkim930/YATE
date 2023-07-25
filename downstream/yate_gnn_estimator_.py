@@ -70,7 +70,7 @@ class BaseYateGNNEstimator(BaseEstimator):
             else:
                 pass
             # Transform numericals
-            self.num_transformer_ = PowerTransformer()
+            # self.num_transformer_ = PowerTransformer()
             X = self._transform_numerical(X)
 
         if self.num_model == 1:
@@ -84,7 +84,7 @@ class BaseYateGNNEstimator(BaseEstimator):
                 delayed(self._run_train)(X, rs) for rs in random_state_list
             )
             self._run_refit(X, result_valid_loss)
-        self.result_valid_loss_ = result_valid_loss
+
         self.is_fitted_ = True
 
         return self
@@ -228,11 +228,11 @@ class BaseYateGNNEstimator(BaseEstimator):
         data_batch = make_batch.from_data_list(X, follow_batch=["edge_index"])
         X_num = data_batch.x_num.cpu().detach().numpy()
         X_num = X_num.astype(np.float64)
-        if self.is_fitted_ == False:
-            X_num = self.num_transformer_.fit_transform(X_num)
-        else:
-            X_num = self.num_transformer_.transform(X_num)
-        # X_num = power_transform(X_num)
+        # if self.is_fitted_ == False:
+        #     X_num = self.num_transformer_.fit_transform(X_num)
+        # else:
+        #     X_num = self.num_transformer_.transform(X_num)
+        X_num = power_transform(X_num)
         X_num = torch.tensor(X_num)
         X_num = torch.nan_to_num(X_num, nan=0)
         data_batch.x_num = X_num
@@ -321,9 +321,9 @@ class YateGNNRegressor(RegressorMixin, BaseYateGNNEstimator):
 
         if self.include_numeric:
             # Transform numericals
-            # X_total = self.X_ + X
-            X = self._transform_numerical(X)
-            # X = X[len(self.X_) :]
+            X_total = self.X_ + X
+            X = self._transform_numerical(X_total)
+            X = X[len(self.X_) :]
 
         # Obtain the batch to feed into the network
         ds_predict_eval = self._set_data_eval(data=X)

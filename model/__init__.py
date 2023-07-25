@@ -8,7 +8,9 @@ from .yate_block import (
 )
 
 from .yate_pretrain import YATE_Pretrain
-from .yate_finetune import YATE_FinetuneReg, YATE_FinetuneCls
+
+# from .yate_finetune import YATE_FinetuneReg, YATE_FinetuneCls
+from .yate_downstream import YATE_GNNModel_Reg, YATE_GNNModel_Cls
 
 __all__ = [
     "yate_attention",
@@ -18,9 +20,8 @@ __all__ = [
     "YATE_Contrast",
     "YATE_Pretrain",
     "YATE_Base",
-    "YATE_Finetune",
-    "YATE_FinetuneReg",
-    "YATE_FinetuneCls",
+    "YATE_GNNModel_Reg",
+    "YATE_GNNModel_Cls",
 ]
 
 classes = __all__

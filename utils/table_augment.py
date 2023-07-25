@@ -1,4 +1,4 @@
-""" Class for augmenting table with KEN/Fasttext
+""" Class for obtaining external information for table with KEN/Fasttext
 """
 
 import pandas as pd
@@ -10,7 +10,7 @@ from typing import Union
 from utils import load_config
 
 
-class TableAugmentor:
+class TableExternalInfoExtractor:
     def __init__(self):
         self.config = load_config()
 
@@ -25,27 +25,20 @@ class TableAugmentor:
         data: pd.DataFrame,
         method: str,
         augment_col_name: str,
-        drop_augment_col: bool = False,
         target_name: Union[str, None] = None,
-        concat: bool = True,
     ):
-        # Oritinal data
-        data_x = data.copy()
+        # Original data
+        data_ = data.copy()
+        data_.replace("\n", " ", regex=True, inplace=True)
+        data_ = data.copy()
         if target_name is not None:
-            data_x = data_x.drop(labels=target_name, axis=1)
-            target = data[target_name]
+            target = data_[target_name]
+            data_.drop(labels=target_name, axis=1, inplace=True)
 
         if method == "ken":
-            data_aug = self._augment_with_ken(data, augment_col_name)
+            data_aug = self._augment_with_ken(data_, augment_col_name)
         elif method == "fasttext":
-            data_aug = self._augment_with_fasttext(data, augment_col_name)
-
-        if concat:
-            data_aug = pd.concat([data_x, data_aug], axis=1)
-            if drop_augment_col:
-                data_aug.drop(columns=["augment_col_name"], inplace=True)
-
-        data_aug = pd.concat([data_aug, target], axis=1)
+            data_aug = self._augment_with_fasttext(data_, augment_col_name)
 
         return data_aug
 
@@ -55,11 +48,16 @@ class TableAugmentor:
         augment_col_name: str,
     ):
         mapping = data[augment_col_name].map(self.ken_embed_ent2idx)
+        mapping = mapping.dropna()
+        mapping = mapping.astype(np.int64)
         mapping = np.array(mapping)
 
         data_aug = self.ken_emb.iloc[mapping]
         data_aug = data_aug.reset_index(drop=True)
-        data_aug = data_aug.drop(labels="Entity", axis=1)
+        data_aug.rename(columns={"Entity": "name"}, inplace=True)
+        # data_aug = data_aug.drop(labels="Entity", axis=1)
+
+        data_aug.drop_duplicates(inplace=True)
 
         return data_aug
 
@@ -83,5 +81,9 @@ class TableAugmentor:
 
         col_names = [f"X{i}" for i in range(data_aug.shape[1])]
         data_aug = data_aug.set_axis(col_names, axis="columns")
+
+        data_aug = pd.concat([data_aug, data[augment_col_name]], axis=1)
+
+        data_aug.drop_duplicates(inplace=True)
 
         return data_aug

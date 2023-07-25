@@ -63,7 +63,7 @@ class Table2Vector_LM:
             for col in data_x_num.columns
             if data_x_num[col].nunique() < numerical_cardinality_threshold
         ]
-        data_x[col_numeric_low_card] = data_x[col_numeric_low_card].astype("object")
+        data_x[col_numeric_low_card] = data_x[col_numeric_low_card].astype("str")
         data_x_cat = data_x.select_dtypes(include="object")
         data_x_num = data_x.select_dtypes(exclude="object")
 
@@ -72,14 +72,19 @@ class Table2Vector_LM:
             for i in tqdm(range(num_data))
         ]
         X_categorical = np.array(X_categorical)
-        X_numerical = np.array(data_x_num)
+        data_x_cat = pd.DataFrame(X_categorical)
 
-        data_total["X_categorical"] = X_categorical
-        data_total["X_numerical"] = X_numerical
+        col_names = [f"X{i}" for i in range(data_x_cat.shape[1])]
+        data_x_cat = data_x_cat.set_axis(col_names, axis="columns")
+
+        data_total = pd.concat([data_x_cat, data_x_num, data_y], axis=1)
+        # data_total = pd.concat([data_x_cat, data_y], axis=1)
 
         if save_dir is not None:
-            with open(save_dir, "wb") as pickle_file:
-                pickle.dump(data_total, pickle_file)
+            data_total.to_parquet(save_dir, index=False)
+
+            # with open(save_dir, "wb") as pickle_file:
+            #     pickle.dump(data_total, pickle_file)
 
         return data_total
 
@@ -91,7 +96,7 @@ class Table2Vector_LM:
             .str.replace(">", "")
             .str.replace("\n", "")
             .str.replace("_", " ")
-            # .str.lower()
+            .str.lower()
         )
 
         serialization = np.array(data_temp.index) + " " + np.array(data_temp) + " . "
@@ -107,11 +112,13 @@ class Table2Vector_LM:
             with torch.no_grad():
                 output = self.lm_model_roberta(**encoded_input)
 
-            last_four_layers = [
-                (output["hidden_states"][i][0][1:]).mean(dim=0)
-                for i in (-1, -2, -3, -4)
-            ]
-            embedding = torch.cat(tuple(last_four_layers), dim=-1)
+            # last_four_layers = [
+            #     (output["hidden_states"][i][0][1:]).mean(dim=0)
+            #     for i in (-1, -2, -3, -4)
+            # ]
+            # embedding = torch.cat(tuple(last_four_layers), dim=-1)
+
+            embedding = (output["hidden_states"][-1][0][1:]).mean(dim=0)
             embedding = embedding.cpu().detach().numpy()
             embedding = embedding.astype(np.float32)
         elif lm_method == "fasttext":
