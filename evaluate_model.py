@@ -24,7 +24,6 @@ from sklearn.ensemble import (
 )
 from catboost import CatBoostRegressor, CatBoostClassifier
 from downstream import YateGNNRegressor, YateGNNClassifier
-from xgboost import XGBRegressor, XGBClassifier
 from utils import load_config, TabpfnClassifier
 from scipy.stats import loguniform, lognorm, randint, uniform, norm
 
@@ -397,11 +396,6 @@ def _assign_estimator(
             estimator = HistGradientBoostingRegressor()
         else:
             estimator = HistGradientBoostingClassifier()
-    elif estim_method == "xgboost":
-        if task == "regression":
-            estimator = XGBRegressor()
-        else:
-            estimator = XGBClassifier()
     elif estim_method == "tabpfn":
         estimator = TabpfnClassifier()
     return estimator
