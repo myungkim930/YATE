@@ -22,10 +22,15 @@ from sklearn.ensemble import (
     HistGradientBoostingRegressor,
     HistGradientBoostingClassifier,
 )
+from sklearn.preprocessing import PowerTransformer, OrdinalEncoder
+from sklearn.impute import SimpleImputer
+from baselines.resnet import create_resnet_regressor_skorch
 from catboost import CatBoostRegressor, CatBoostClassifier
 from downstream import YateGNNRegressor, YateGNNClassifier
 from utils import load_config, TabpfnClassifier
 from scipy.stats import loguniform, lognorm, randint, uniform, norm
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
 
 
 # Run evaluation
@@ -110,6 +115,14 @@ def _run_model(
             num_train,
             random_state,
         )
+    elif "resnet" in preprocess_method:
+        X_train, X_test, y_train, y_test = _prepare_resnet(
+            data,
+            target_name,
+            cat_col_names,
+            num_train,
+            random_state,
+        )
     else:
         X_train, X_test, y_train, y_test = _set_split(
             data,
@@ -128,16 +141,22 @@ def _run_model(
     )
 
     # Set estimator
-    if "catboost" in estim_method:
+    if "catboost" in estim_method or "resnet" in estim_method:
         cat_features = [data.columns.get_loc(i) for i in cat_col_names]
     else:
         cat_features = None
+    if "resnet" in estim_method:
+        # +1 for unknown category
+        categories = [len(pd.unique(data[col])) + 1 for col in cat_col_names]
+    else:
+        categories = None
     estimator = _assign_estimator(
         estim_method,
         task,
         include_numeric,
         device,
         cat_features,
+        categories,
     )
 
     # Optimization
@@ -164,7 +183,7 @@ def _run_model(
     elif "catboost" in method:
         hyperparameter_search = estimator
     else:
-        n_iter, refit, n_jobs = 100, True, -1
+        n_iter, refit, n_jobs = 100, True, 1
         hyperparameter_search = RandomizedSearchCV(
             estimator,
             param_distributions=param_distributions,
@@ -173,6 +192,7 @@ def _run_model(
             scoring=scoring,
             refit=refit,
             n_jobs=n_jobs,
+            error_score='raise',
         )
 
     marker = f"{data_name}_{method}_num_train-{num_train}_numeric-{include_numeric}_rs-{random_state}"
@@ -361,6 +381,40 @@ def _prepare_catboost(data_pd, target_name, cat_col_names, num_train, random_sta
     )
     return np.array(X_train), np.array(X_test), np.array(y_train), np.array(y_test)
 
+def _prepare_resnet(data_pd, target_name, cat_col_names, num_train, random_state):
+    data = data_pd.copy()
+    X_train, X_test, y_train, y_test = _set_split(
+        data,
+        target_name,
+        num_train,
+        random_state=random_state,
+    )
+    numerical_preprocessor = Pipeline([
+        ('power_transform', PowerTransformer()),
+        ('imputer', SimpleImputer(strategy='mean')),
+    ])
+    categorical_preprocessor = Pipeline([
+        ('imputer', SimpleImputer(strategy='most_frequent')),
+        ('encoder', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)),
+    ])
+    print("cat cols", cat_col_names)
+    print("num cols", [col for col in X_train.columns if col not in cat_col_names])
+    preprocessor = ColumnTransformer([
+        ('numerical', numerical_preprocessor, [col for col in X_train.columns if col not in cat_col_names]),
+        ('categorical', categorical_preprocessor, cat_col_names),
+    ])
+    X_train = preprocessor.fit_transform(X_train, y=y_train)
+    X_test = preprocessor.transform(X_test)
+
+    #TODO export categories to the main thing
+    # and use them here
+
+
+    return (np.array(X_train).astype(np.float32), 
+            np.array(X_test).astype(np.float32), 
+            np.array(y_train).astype(np.float32), 
+            np.array(y_test).astype(np.float32))
+
 
 def _assign_estimator(
     estim_method: str,
@@ -368,6 +422,7 @@ def _assign_estimator(
     include_numeric,
     device,
     cat_features,
+    categories,
 ):
     if estim_method == "yate-gnn":
         fixed_params = dict()
@@ -398,6 +453,14 @@ def _assign_estimator(
             estimator = HistGradientBoostingClassifier()
     elif estim_method == "tabpfn":
         estimator = TabpfnClassifier()
+    elif estim_method == "resnet":
+        if task == "regression":
+            estimator = create_resnet_regressor_skorch(
+                cat_features=cat_features,
+                categories=categories,
+            )
+        else:
+            raise NotImplementedError
     return estimator
 
 
@@ -423,17 +486,20 @@ def _set_param_distributions(estim_method: str, num_train: int):
         param_distributions["max_depth"] = [None, 2, 3, 4]
         param_distributions["max_leaf_nodes"] = norm_int(31, 5)
         param_distributions["min_samples_leaf"] = norm_int(20, 2)
-    elif estim_method == "xgboost":
-        param_distributions["max_depth"] = randint(1, 11)
-        param_distributions["n_estimators"] = list(range(100, 6000, 200))
-        param_distributions["min_child_weight"] = loguniform_int(1, 100)
-        param_distributions["subsample"] = uniform(0.5, 0.5)
-        param_distributions["learning_rate"] = loguniform(1e-5, 0.7)
-        param_distributions["colsample_bylevel"] = uniform(0.5, 0.5)
-        param_distributions["colsample_bytree"] = uniform(0.5, 0.5)
-        param_distributions["gamma"] = loguniform(1e-8, 7)
-        param_distributions["reg_alpha"] = loguniform(1e-8, 1e2)
-        param_distributions["reg_lambda"] = loguniform(1, 4)
+    elif estim_method == "resnet":
+        param_distributions = {
+            "module__activation": ["reglu"],
+            "module__normalization": ["batchnorm", "layernorm"],
+            "module__n_layers": randint(1, 17),  # equivalent to q_uniform(1, 16)
+            "module__d": randint(64, 1025),  # equivalent to q_uniform(64, 1024)
+            "module__d_hidden_factor": uniform(1, 3),  # uniform distribution between 1 and 4
+            "module__hidden_dropout": uniform(0.0, 0.5),  # uniform distribution between 0.0 and 0.5
+            "module__residual_dropout": uniform(0.0, 0.5),  # uniform distribution between 0.0 and 0.5
+            "lr": loguniform(1e-5, 1e-2),  # log uniform distribution between 1e-5 and 1e-2
+            "optimizer__weight_decay": loguniform(1e-8, 1e-3),  # log uniform distribution between 1e-8 and 1e-3
+            "module__d_embedding": randint(64, 513),  # equivalent to q_uniform(64, 512)
+            #"lr_scheduler": [True, False]  # two possible values
+        }
     else:
         param_distributions["n_ensemble_configurations"] = list(range(1, 101))
     return param_distributions
