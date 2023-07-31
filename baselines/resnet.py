@@ -28,12 +28,18 @@ class NeuralNetRegressorBis(NeuralNetRegressor):
             y = y.reshape(-1, 1)
         return super().fit(X, y)
 
-def create_resnet_regressor_skorch(id, wandb_run=None, use_checkpoints=True,
-                                   categorical_indicator=None, **kwargs):
+def create_resnet_regressor_skorch(id=None, wandb_run=None, use_checkpoints=True,
+                                   cat_features=None, **kwargs):
+    if id is None:
+        # generate id at random
+        id = np.random.randint(0, 1000000)
+        print("id is None, generated id is {}".format(id))
     print("resnet regressor")
     if "lr_scheduler" not in kwargs:
+        print("no lr scheduler")
         lr_scheduler = False
     else:
+        print("lr scheduler")
         lr_scheduler = kwargs.pop("lr_scheduler")
     if "es_patience" not in kwargs.keys():
         es_patience = 40
@@ -43,20 +49,26 @@ def create_resnet_regressor_skorch(id, wandb_run=None, use_checkpoints=True,
         lr_patience = 30
     else:
         lr_patience = kwargs.pop('lr_patience')
-    optimizer = kwargs.pop('optimizer')
+    if "optimizer" not in kwargs.keys():
+        optimizer = "adamw"
+    else:
+        optimizer = kwargs.pop('optimizer')
     if optimizer == "adam":
         optimizer = Adam
     elif optimizer == "adamw":
         optimizer = AdamW
     elif optimizer == "sgd":
         optimizer = SGD
-    batch_size = kwargs.pop('batch_size')
+    if "batch_size" not in kwargs.keys():
+        batch_size = 128
+    else:
+        batch_size = kwargs.pop('batch_size')
     if "categories" not in kwargs.keys():
         categories = None
     else:
         categories = kwargs.pop('categories')
     callbacks = [InputShapeSetterResnet(regression=True,
-                                        categorical_indicator=categorical_indicator,
+                                        cat_features=cat_features,
                                         categories=categories),
                        EarlyStopping(monitor="valid_loss", patience=es_patience)] #TODO try with train_loss, and in this case use checkpoint
     callbacks.append(EpochScoring(scoring='neg_root_mean_squared_error', name='train_accuracy', on_train=True))
@@ -65,12 +77,10 @@ def create_resnet_regressor_skorch(id, wandb_run=None, use_checkpoints=True,
         callbacks.append(LRScheduler(policy=ReduceLROnPlateau, patience=lr_patience, min_lr=2e-5, factor=0.2)) #FIXME make customizable
     if use_checkpoints:
         callbacks.append(Checkpoint(dirname="skorch_cp", f_params=r"params_{}.pt".format(id), f_optimizer=None,
-                                  f_criterion=None))
+                                  f_criterion=None, load_best=True, monitor="valid_loss_best"))
     if not wandb_run is None:
         callbacks.append(WandbLogger(wandb_run, save_model=False))
         callbacks.append(LearningRateLogger())
-    if not categorical_indicator is None:
-        categorical_indicator = torch.BoolTensor(categorical_indicator)
 
     model = NeuralNetRegressorBis(
         ResNet,
@@ -82,7 +92,7 @@ def create_resnet_regressor_skorch(id, wandb_run=None, use_checkpoints=True,
         module__categories=None, # will be change when fitted
         module__d_out=1,  # idem
         module__regression=True,
-        module__categorical_indicator=categorical_indicator,
+        module__categorical_indicator=None, # will be change when fitted
         callbacks=callbacks,
         verbose=0,
         **kwargs
