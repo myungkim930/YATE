@@ -49,8 +49,7 @@ class ResNet(nn.Module):
         d_in = d_numerical
         d_hidden = int(d * d_hidden_factor)
         self.categories = categories
-
-        if categories is not None:
+        if categories is not None and len(categories) > 0:
             d_in += len(categories) * d_embedding
             category_offsets = torch.tensor([0] + categories[:-1]).cumsum(0)
             self.register_buffer('category_offsets', category_offsets)
@@ -90,9 +89,9 @@ class ResNet(nn.Module):
             x_num = x
             x_cat = None
         x = []
-        if x_num is not None:
+        if x_num is not None and x_num.numel() > 0:
             x.append(x_num)
-        if x_cat is not None:
+        if x_cat is not None and x_cat.numel() > 0:
             # replace -1 by the last category
             for i in range(x_cat.shape[1]):
                 x_cat[:, i][x_cat[:, i] == -1] = self.categories[i] - 1

@@ -83,9 +83,17 @@ def _run_model(
             data_pd[["name", target_name]], data_fasttext, how="left", on="name"
         )
         data.drop(columns="name", inplace=True)
+        # edit cat_col_names
+        #TODO: change this when we don't drop orginal columns
+        # now all columns are numeric
+        cat_col_names = []
+        num_col_names = data.columns.tolist()
+        # remove target
+        if target_name in num_col_names:
+            num_col_names.remove(target_name)
     else:
-        raise NotImplementedError
-        #data = data_pd.copy()
+        print("No fasttext or lm model is specified.")
+        data = data_pd.copy()
 
     # Preprocess data with splits
 
@@ -140,6 +148,13 @@ def _run_model(
             random_state=random_state,
         )
 
+    # convert to numpy
+    # fasttext_resnet doesn't work otherwise
+    # but I don't understand why...
+    X_train = X_train.to_numpy().astype(np.float32)
+    X_test = X_test.to_numpy().astype(np.float32)
+    y_train = y_train.astype(np.float32)
+    y_test = y_test.astype(np.float32)
 
     # Set cross-validation settings
     cv = RepeatedKFold(n_splits=5, n_repeats=5, random_state=1234)
