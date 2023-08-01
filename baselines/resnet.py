@@ -38,14 +38,10 @@ class NeuralNetRegressorBis(NeuralNetRegressor):
         self.training = True
         for callback in self.callbacks_:
             if isinstance(callback[1], UniquePrefixCheckpoint):
-                print("found UniquePrefixCheckpoint")
-                print("before", callback[1].fn_prefix)
                 callback[1].fn_prefix += str(np.random.randint(0, 1000000))
-                print("after", callback[1].fn_prefix)
     def on_train_end(self, net, X, y):
         self.training = False
     def predict(self, X):
-        print("predicting")
         y_pred = super().predict(X)
         # remove the checkpoint file if it exist
         # after the prediction
@@ -54,7 +50,6 @@ class NeuralNetRegressorBis(NeuralNetRegressor):
         if not self.training:
             for callback in self.callbacks_:
                 if isinstance(callback[1], UniquePrefixCheckpoint):
-                    print("found UniquePrefixCheckpoint")
                     fn_prefix = callback[1].fn_prefix
                     print(f"removing skorch_cp/{fn_prefix}params.pt")
                     os.remove(f"skorch_cp/{fn_prefix}params.pt")
@@ -113,9 +108,6 @@ def create_resnet_regressor_skorch(id=None, wandb_run=None, use_checkpoints=True
     if not wandb_run is None:
         callbacks.append(WandbLogger(wandb_run, save_model=False))
         callbacks.append(LearningRateLogger())
-
-
-    print(f"parameters are {kwargs}")
 
     model = NeuralNetRegressorBis(
         ResNet,

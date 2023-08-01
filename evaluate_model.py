@@ -193,6 +193,7 @@ def _run_model(
             refit=refit,
             n_jobs=n_jobs,
             error_score='raise',
+            verbose=100,
         )
 
     marker = f"{data_name}_{method}_num_train-{num_train}_numeric-{include_numeric}_rs-{random_state}"
