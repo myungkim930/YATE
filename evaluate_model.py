@@ -183,7 +183,7 @@ def _run_model(
     elif "catboost" in method:
         hyperparameter_search = estimator
     else:
-        n_iter, refit, n_jobs = 100, True, 1
+        n_iter, refit, n_jobs = 100, True, -1
         hyperparameter_search = RandomizedSearchCV(
             estimator,
             param_distributions=param_distributions,
