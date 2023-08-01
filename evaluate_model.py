@@ -72,11 +72,20 @@ def _run_model(
     if "lm" in preprocess_method:
         data = data_additional[preprocess_method].copy()
     elif "fasttext" in preprocess_method:
-        data = data_additional["fasttext"].copy()
+        data_fasttext = data_additional["fasttext"].copy()
+        #TODO: move this into a function
+        name_col = data_fasttext["name"]
+        name_col = (
+            name_col.str.replace("<", "").str.replace(">", "").str.replace("_", " ")
+        )
+        data_fasttext["name"] = name_col
+        data = pd.merge(
+            data_pd[["name", target_name]], data_fasttext, how="left", on="name"
+        )
         data.drop(columns="name", inplace=True)
-        data = pd.concat([data, data_pd[target_name]], axis=1)
     else:
-        data = data_pd.copy()
+        raise NotImplementedError
+        #data = data_pd.copy()
 
     # Preprocess data with splits
 
@@ -130,6 +139,7 @@ def _run_model(
             num_train,
             random_state=random_state,
         )
+
 
     # Set cross-validation settings
     cv = RepeatedKFold(n_splits=5, n_repeats=5, random_state=1234)
