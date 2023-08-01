@@ -8,8 +8,9 @@ from skorch.callbacks import WandbLogger
 import sys
 sys.path.append("")
 from baselines.resnet_model import ResNet, InputShapeSetterResnet
-from skorch.callbacks import Callback
+from skorch.callbacks import Callback, Checkpoint
 import numpy as np
+import os
 
 class LearningRateLogger(Callback):
     def on_epoch_begin(self, net,
@@ -20,6 +21,12 @@ class LearningRateLogger(Callback):
                 callback.wandb_run.log({'log_lr': np.log10(net.optimizer_.param_groups[0]['lr'])})
 
 
+class UniquePrefixCheckpoint(Checkpoint):
+    def initialize(self):
+        print("Initializing UniquePrefixCheckpoint")
+        self.fn_prefix = str(id(self))
+        print("fn_prefix is {}".format(self.fn_prefix))
+        return super(UniquePrefixCheckpoint, self).initialize()
 
 
 class NeuralNetRegressorBis(NeuralNetRegressor):
@@ -27,13 +34,38 @@ class NeuralNetRegressorBis(NeuralNetRegressor):
         if y.ndim == 1:
             y = y.reshape(-1, 1)
         return super().fit(X, y)
+    def on_train_begin(self, net, X, y):
+        self.training = True
+        for callback in self.callbacks_:
+            if isinstance(callback[1], UniquePrefixCheckpoint):
+                print("found UniquePrefixCheckpoint")
+                print("before", callback[1].fn_prefix)
+                callback[1].fn_prefix += str(np.random.randint(0, 1000000))
+                print("after", callback[1].fn_prefix)
+    def on_train_end(self, net, X, y):
+        self.training = False
+    def predict(self, X):
+        print("predicting")
+        y_pred = super().predict(X)
+        # remove the checkpoint file if it exist
+        # after the prediction
+        # this could be done at the end of the training
+        # but we want to do it after load_best
+        if not self.training:
+            for callback in self.callbacks_:
+                if isinstance(callback[1], UniquePrefixCheckpoint):
+                    print("found UniquePrefixCheckpoint")
+                    fn_prefix = callback[1].fn_prefix
+                    print(f"removing skorch_cp/{fn_prefix}params.pt")
+                    os.remove(f"skorch_cp/{fn_prefix}params.pt")
+        return y_pred
 
 def create_resnet_regressor_skorch(id=None, wandb_run=None, use_checkpoints=True,
                                    cat_features=None, **kwargs):
-    if id is None:
+    #if id is None:
         # generate id at random
-        id = np.random.randint(0, 1000000)
-        print("id is None, generated id is {}".format(id))
+     #   id = np.random.randint(0, 1000000)
+     #   print("id is None, generated id is {}".format(id))
     print("resnet regressor")
     if "lr_scheduler" not in kwargs:
         print("no lr scheduler")
@@ -76,11 +108,14 @@ def create_resnet_regressor_skorch(id=None, wandb_run=None, use_checkpoints=True
     if lr_scheduler:
         callbacks.append(LRScheduler(policy=ReduceLROnPlateau, patience=lr_patience, min_lr=2e-5, factor=0.2)) #FIXME make customizable
     if use_checkpoints:
-        callbacks.append(Checkpoint(dirname="skorch_cp", f_params=r"params_{}.pt".format(id), f_optimizer=None,
-                                  f_criterion=None, load_best=True, monitor="valid_loss_best"))
+        callbacks.append(UniquePrefixCheckpoint(dirname="skorch_cp", f_params=r"params.pt", f_optimizer=None,
+                                  f_criterion=None, f_history=None, load_best=True, monitor="valid_loss_best"))
     if not wandb_run is None:
         callbacks.append(WandbLogger(wandb_run, save_model=False))
         callbacks.append(LearningRateLogger())
+
+
+    print(f"parameters are {kwargs}")
 
     model = NeuralNetRegressorBis(
         ResNet,

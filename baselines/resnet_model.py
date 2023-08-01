@@ -34,6 +34,7 @@ class ResNet(nn.Module):
             categorical_indicator
     ) -> None:
         print("resnet")
+        print(f"Parameters: {d_numerical}, {categories}, {d_embedding}, {d}, {d_hidden_factor}, {n_layers}, {activation}, {normalization}, {hidden_dropout}, {residual_dropout}, {d_out}, {regression}, {categorical_indicator}")
         super().__init__()
         #categories = None #TODO
         def make_normalization():
