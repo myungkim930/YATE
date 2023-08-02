@@ -151,8 +151,10 @@ def _run_model(
     # convert to numpy
     # fasttext_resnet doesn't work otherwise
     # but I don't understand why...
-    X_train = X_train.to_numpy().astype(np.float32)
-    X_test = X_test.to_numpy().astype(np.float32)
+    if isinstance(X_train, pd.DataFrame):
+        X_train = X_train.to_numpy().astype(np.float32)
+    if isinstance(X_test, pd.DataFrame):
+        X_test = X_test.to_numpy().astype(np.float32)
     y_train = y_train.astype(np.float32)
     y_test = y_test.astype(np.float32)
 
