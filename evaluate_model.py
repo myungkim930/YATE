@@ -86,7 +86,7 @@ def _run_model(
         #TODO: move this into a function
         name_col = data_fasttext["name"]
         name_col = (
-            name_col.str.replace("<", "").str.replace(">", "").str.replace("_", " ")
+            name_col.str.replace("<", "").str.replace(">", "").str.replace("_", " ").str.lower()
         )
         data_fasttext["name"] = name_col
         data = pd.merge(
