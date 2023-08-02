@@ -48,7 +48,11 @@ def _run_model(
 ):
     
     node_name = os.environ.get('SLURMD_NODENAME', 'Unknown')
+    processor =  platform.processor()
+    n_cpus_on_node = os.environ.get("SLURM_CPUS_ON_NODE")
     print(f"Running on node: {node_name}")
+    print(f"Processor: {processor}")
+    print(f"Number of cpus on node: {n_cpus_on_node}")
     # Load data
     data_pd, data_additional = _load_data(data_name, config)
 
@@ -274,9 +278,9 @@ def _run_model(
     results_model = pd.DataFrame([results_], columns=result_criterion)
     results_model.columns = f"{method}_" + results_model.columns
     results_model["random_state"] = random_state
-    results_model["processor"] = platform.processor()
+    results_model["processor"] = processor
     results_model["slurm_node"] = node_name
-    results_model["n_cpus_on_node"] = os.environ.get("SLURM_CPUS_ON_NODE")
+    results_model["n_cpus_on_node"] = n_cpus_on_node
 
     marker = f"{data_name}_{method}_num_train-{num_train}_numeric-{include_numeric}_rs-{random_state}"
     results_model_dir = result_save_dir_base + f"/score/{marker}.csv"
