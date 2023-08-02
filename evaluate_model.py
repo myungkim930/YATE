@@ -519,7 +519,7 @@ def _set_param_distributions(estim_method: str, num_train: int):
             "module__activation": ["reglu"],
             "module__normalization": ["batchnorm", "layernorm"],
             #"module__n_layers": randint(1, 17),  # equivalent to q_uniform(1, 16)
-            "module__n_layers": randint(1, 10),
+            "module__n_layers": randint(1, 9),
             #"module__d": randint(64, 1025),  # equivalent to q_uniform(64, 1024)
             "module__d": randint(32, 513),
             "module__d_hidden_factor": uniform(1, 3),  # uniform distribution between 1 and 4
@@ -528,7 +528,7 @@ def _set_param_distributions(estim_method: str, num_train: int):
             "lr": loguniform(1e-5, 1e-2),  # log uniform distribution between 1e-5 and 1e-2
             "optimizer__weight_decay": loguniform(1e-8, 1e-3),  # log uniform distribution between 1e-8 and 1e-3
             #"module__d_embedding": randint(64, 513),  # equivalent to q_uniform(64, 512)
-            "module__d_embedding": randint(32, 257),
+            "module__d_embedding": randint(32, 513),
             #"lr_scheduler": [True, False]  # two possible values
         }
     else:
