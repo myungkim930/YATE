@@ -229,7 +229,6 @@ def _run_model(
             scoring=scoring,
             refit=refit,
             n_jobs=n_jobs,
-            error_score='raise',
             verbose=100,
         )
 
