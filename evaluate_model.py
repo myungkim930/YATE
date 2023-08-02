@@ -31,6 +31,9 @@ from utils import load_config, TabpfnClassifier
 from scipy.stats import loguniform, lognorm, randint, uniform, norm
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
+import platform
+import os
+
 
 
 # Run evaluation
@@ -43,6 +46,9 @@ def _run_model(
     random_state,
     device,
 ):
+    
+    node_name = os.environ.get('SLURMD_NODENAME', 'Unknown')
+    print(f"Running on node: {node_name}")
     # Load data
     data_pd, data_additional = _load_data(data_name, config)
 
@@ -268,6 +274,9 @@ def _run_model(
     results_model = pd.DataFrame([results_], columns=result_criterion)
     results_model.columns = f"{method}_" + results_model.columns
     results_model["random_state"] = random_state
+    results_model["processor"] = platform.processor()
+    results_model["slurm_node"] = node_name
+    results_model["n_cpus_on_node"] = os.environ.get("SLURM_CPUS_ON_NODE")
 
     marker = f"{data_name}_{method}_num_train-{num_train}_numeric-{include_numeric}_rs-{random_state}"
     results_model_dir = result_save_dir_base + f"/score/{marker}.csv"
