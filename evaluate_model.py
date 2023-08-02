@@ -101,6 +101,7 @@ def _run_model(
         # remove target
         if target_name in num_col_names:
             num_col_names.remove(target_name)
+        print(f"Proporation of missing values: {data.isna().sum().sum() / data.size}")
     else:
         print("No fasttext or lm model is specified.")
         data = data_pd.copy()
