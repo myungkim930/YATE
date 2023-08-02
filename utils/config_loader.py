@@ -7,31 +7,33 @@ Subject to change later
 def load_config():
     config = dict()
 
+    base_dir = "/Users/leo/VSCProjects/YATE"
+    print("Base directory: ", base_dir)
     # Directories
     config["fasttext_dir"] = "/data/parietal/store3/work/mkim/gitlab/cc.en.300.bin"
     config[
         "ken_embed_dir"
     ] = "/data/parietal/store3/work/jstojano/gitlab/alexis_cvetkov/KEN/experiments/embedding_visualization/emb_mure_yago3_2022_full.parquet"
 
-    config["data_ds_dir"] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/ds_data/"
-    config["data_kg_dir"] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/kg_data/"
+    config["data_ds_dir"] = base_dir + "/data/ds_data/"
+    config["data_kg_dir"] = base_dir + "/data/kg_data/"
     config[
         "data_eval_ds_dir"
-    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/eval_ds_data/"
+    ] = base_dir + "/data/eval_ds_data/"
     config[
         "data_eval_jl_dir"
-    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/eval_jl_data/"
+    ] = base_dir + "/data/eval_jl_data/"
     config[
         "data_eval_kg_dir"
-    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/eval_kg_data/"
+    ] = base_dir + "/data/eval_kg_data/"
     config[
         "hyperopt_log_dir"
-    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/hyperopt_log/"
-    config["results_dir"] = "/data/parietal/store3/work/mkim/gitlab/YATE/results/"
+    ] = base_dir + "/data/hyperopt_log/"
+    config["results_dir"] = base_dir + "/results/"
 
     config[
         "pretrained_model_dir"
-    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_2007_NB128_NH1_NP1_MN100_CL/ckpt_step190000.pt"
+    ] = base_dir + "/data/saved_model/yago3_2022_2007_NB128_NH1_NP1_MN100_CL/ckpt_step190000.pt"
     # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_pretrained_MS.pt
     # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_num_pretrained_CS.pt
     # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_num_pretrained_MS.pt
