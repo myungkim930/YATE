@@ -89,8 +89,9 @@ def _run_model(
             name_col.str.replace("<", "").str.replace(">", "").str.replace("_", " ").str.lower()
         )
         data_fasttext["name"] = name_col
+        #TODO check
         data = pd.merge(
-            data_pd[["name", target_name]], data_fasttext, how="left", on="name"
+            data_pd[["name", target_name]], data_fasttext, how="inner", on="name"
         )
         data.drop(columns="name", inplace=True)
         # edit cat_col_names
