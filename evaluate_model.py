@@ -21,6 +21,8 @@ from sklearn.metrics import (
 from sklearn.ensemble import (
     HistGradientBoostingRegressor,
     HistGradientBoostingClassifier,
+    GradientBoostingClassifier,
+    GradientBoostingRegressor
 )
 from sklearn.preprocessing import PowerTransformer, OrdinalEncoder
 from sklearn.impute import SimpleImputer
@@ -163,12 +165,13 @@ def _run_model(
     # convert to numpy
     # fasttext_resnet doesn't work otherwise
     # but I don't understand why...
-    if isinstance(X_train, pd.DataFrame):
-        X_train = X_train.to_numpy().astype(np.float32)
-    if isinstance(X_test, pd.DataFrame):
-        X_test = X_test.to_numpy().astype(np.float32)
-    y_train = y_train.astype(np.float32)
-    y_test = y_test.astype(np.float32)
+    if "resnet" in preprocess_method:
+        if isinstance(X_train, pd.DataFrame):
+            X_train = X_train.to_numpy().astype(np.float32)
+        if isinstance(X_test, pd.DataFrame):
+            X_test = X_test.to_numpy().astype(np.float32)
+        y_train = y_train.astype(np.float32)
+        y_test = y_test.astype(np.float32)
 
     # Set cross-validation settings
     cv = RepeatedKFold(n_splits=5, n_repeats=5, random_state=1234)
@@ -493,6 +496,11 @@ def _assign_estimator(
             estimator = HistGradientBoostingRegressor()
         else:
             estimator = HistGradientBoostingClassifier()
+    elif estim_method == "gb":
+        if task == "regression":
+            estimator = GradientBoostingRegressor()
+        else:
+            estimator = GradientBoostingClassifier()
     elif estim_method == "tabpfn":
         estimator = TabpfnClassifier()
     elif estim_method == "resnet":
@@ -521,7 +529,7 @@ def _set_param_distributions(estim_method: str, num_train: int):
         param_distributions["depth"] = randint(4, 11)
         param_distributions["l2_leaf_reg"] = loguniform(2, 10)
         param_distributions["random_strength"] = uniform(0, 10)
-    elif estim_method == "histgb":
+    elif estim_method == "histgb" or estim_method == "gb":
         param_distributions["loss"] = ["squared_error", "absolute_error"]
         param_distributions["learning_rate"] = loguniform(1e-2, 10)
         # param_distributions["l2_regularization"] = loguniform(1e-6, 1e3)
