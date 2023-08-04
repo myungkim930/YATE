@@ -26,7 +26,7 @@ from sklearn.ensemble import (
 )
 from sklearn.preprocessing import PowerTransformer, OrdinalEncoder
 from sklearn.impute import SimpleImputer
-from baselines.resnet import create_resnet_regressor_skorch
+from baselines.resnet import create_resnet_regressor_skorch, create_resnet_classifier_skorch
 from catboost import CatBoostRegressor, CatBoostClassifier
 from downstream import YateGNNRegressor, YateGNNClassifier
 from utils import load_config, TabpfnClassifier
@@ -510,7 +510,10 @@ def _assign_estimator(
                 categories=categories,
             )
         else:
-            raise NotImplementedError
+            estimator = create_resnet_classifier_skorch(
+                cat_features=cat_features,
+                categories=categories,
+            )
     return estimator
 
 
