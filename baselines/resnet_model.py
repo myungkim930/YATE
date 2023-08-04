@@ -149,7 +149,6 @@ class InputShapeSetterResnet(skorch.callbacks.Callback):
                     categories = list((X.iloc[:, self.categorical_indicator].max(0) + + 2).astype(int)) #+2 for unknown category
             else:
                 categories = self.categories
-        #print("categories: {}".format(categories))
         net.set_params(module__d_numerical=d_numerical,
         module__categories=categories, #FIXME #lib.get_categories(X_cat),
         module__categorical_indicator=torch.BoolTensor(self.categorical_indicator) if self.categorical_indicator is not None else None,

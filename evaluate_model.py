@@ -61,6 +61,7 @@ def _run_model(
     # Basic settings
     target_name = data_additional["target_name"]
     task = data_additional["task"]
+    print("task is {}".format(task))
     scoring, result_criterion = _set_score_criterion(task)
 
     # Set methods
@@ -165,13 +166,15 @@ def _run_model(
     # convert to numpy
     # fasttext_resnet doesn't work otherwise
     # but I don't understand why...
-    if "resnet" in preprocess_method:
+    if "resnet" in estim_method:
+        print("convert to numpy")
         if isinstance(X_train, pd.DataFrame):
             X_train = X_train.to_numpy().astype(np.float32)
         if isinstance(X_test, pd.DataFrame):
             X_test = X_test.to_numpy().astype(np.float32)
         y_train = y_train.astype(np.float32)
         y_test = y_test.astype(np.float32)
+
 
     # Set cross-validation settings
     cv = RepeatedKFold(n_splits=5, n_repeats=5, random_state=1234)
@@ -184,7 +187,9 @@ def _run_model(
 
     # Set estimator
     if "catboost" in estim_method or "resnet" in estim_method:
-        cat_features = [data.columns.get_loc(i) for i in cat_col_names]
+        #TODO check that it works when dealing with both numeric and categorical
+        cols = [col for col in data.columns if col != target_name]
+        cat_features = [cols.index(col) for col in cat_col_names]
     else:
         cat_features = None
     if "resnet" in estim_method:
@@ -235,6 +240,8 @@ def _run_model(
             refit=refit,
             n_jobs=n_jobs,
             verbose=100,
+            # raise error when there is a warning
+            error_score="raise",
         )
 
     marker = f"{data_name}_{method}_num_train-{num_train}_numeric-{include_numeric}_rs-{random_state}"
@@ -586,8 +593,8 @@ def _set_score_criterion(task):
         scoring = "r2"
         score_criterion = ["r2", "rmse"]
     else:
-        scoring = "auc"
-        score_criterion = ["auc", "avg_precision"]
+        scoring = "roc_auc"
+        score_criterion = ["roc_auc", "avg_precision"]
     score_criterion += ["run_time"]
     return scoring, score_criterion
 

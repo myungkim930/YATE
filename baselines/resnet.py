@@ -57,10 +57,10 @@ class NeuralNetRegressorBis(NeuralNetRegressor):
     
 class NeuralNetClassifierBis(NeuralNetClassifier):
     def fit(self, X, y):
-        if y.ndim == 1:
-            y = y.reshape(-1, 1)
+        y = y.astype(np.int64)
         return super().fit(X, y)
     def on_train_begin(self, net, X, y):
+        print("on train begin")
         self.training = True
         for callback in self.callbacks_:
             if isinstance(callback[1], UniquePrefixCheckpoint):
@@ -160,7 +160,7 @@ def create_resnet_classifier_skorch(id=None, wandb_run=None, use_checkpoints=Tru
         # generate id at random
      #   id = np.random.randint(0, 1000000)
      #   print("id is None, generated id is {}".format(id))
-    print("resnet regressor")
+    print("resnet classifier")
     if "lr_scheduler" not in kwargs:
         print("no lr scheduler")
         lr_scheduler = False
@@ -193,11 +193,11 @@ def create_resnet_classifier_skorch(id=None, wandb_run=None, use_checkpoints=Tru
         categories = None
     else:
         categories = kwargs.pop('categories')
-    callbacks = [InputShapeSetterResnet(regression=True,
+    callbacks = [InputShapeSetterResnet(regression=False,
                                         cat_features=cat_features,
                                         categories=categories),
                        EarlyStopping(monitor="valid_loss", patience=es_patience)] #TODO try with train_loss, and in this case use checkpoint
-    callbacks.append(EpochScoring(scoring='neg_root_mean_squared_error', name='train_accuracy', on_train=True))
+    callbacks.append(EpochScoring(scoring='accuracy', name='train_accuracy', on_train=True))
 
     if lr_scheduler:
         callbacks.append(LRScheduler(policy=ReduceLROnPlateau, patience=lr_patience, min_lr=2e-5, factor=0.2)) #FIXME make customizable
@@ -211,7 +211,7 @@ def create_resnet_classifier_skorch(id=None, wandb_run=None, use_checkpoints=Tru
     model = NeuralNetClassifierBis(
         ResNet,
         # Shuffle training data on each epoch
-        loss = nn.CrossEntropyLoss,
+        criterion = nn.CrossEntropyLoss,
         optimizer=optimizer,
         batch_size=max(batch_size, 1), # if batch size is float, it will be reset during fit
         iterator_train__shuffle=True,
