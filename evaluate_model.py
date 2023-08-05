@@ -756,9 +756,6 @@ def _set_param_distributions(estim_method: str, num_train: int):
         param_distributions["l2_leaf_reg"] = loguniform(1, 10)
         param_distributions["bagging_temperature"] = uniform(0, 1)
         param_distributions["iterations"] = randint(400, 1001)
-        param_distributions["depth"] = randint(4, 11)
-        param_distributions["l2_leaf_reg"] = loguniform(2, 10)
-        param_distributions["random_strength"] = uniform(0, 10)
     elif estim_method == "histgb" or estim_method == "gb":
         param_distributions["loss"] = ["squared_error", "absolute_error"]
         param_distributions["learning_rate"] = loguniform(1e-2, 10)
