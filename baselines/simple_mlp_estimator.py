@@ -1,33 +1,38 @@
-"""
-YATE-GNN estimator
-"""
-
 import torch
 import numpy as np
 import copy
 from typing import Union
-from torch_geometric.loader import DataLoader
-from torch_geometric.data import Batch
-from sklearn.preprocessing import power_transform, PowerTransformer
-from sklearn.model_selection import train_test_split
+from torch import Tensor
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
+from sklearn.model_selection import train_test_split
 from sklearn.utils.validation import check_is_fitted, check_random_state
-from model import YATE_GNNModel_Reg, YATE_GNNModel_Cls
-from joblib import Parallel, delayed
+from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
-from utils import load_config
+from joblib import Parallel, delayed
+from model import SimpleMLP
 
 
-class BaseYateGNNEstimator(BaseEstimator):
-    """Base class for Yate Graph Neural Network."""
+class TabularDataset(Dataset):
+    def __init__(self, X, y):
+        self.X = X
+        self.y = y
+
+    def __len__(self):
+        return self.X.size(0)
+
+    def __getitem__(self, idx):
+        return self.X[idx], self.y[idx]
+
+
+class BaseSimpleMLPEstimator(BaseEstimator):
+    """Base class for Simple MLP."""
 
     def __init__(
         self,
         *,
         num_layers,
-        include_numeric,
-        load_pretrain,
-        freeze_pretrain,
+        hidden_dim,
+        dropout_prob,
         learning_rate,
         batch_size,
         val_size,
@@ -40,9 +45,8 @@ class BaseYateGNNEstimator(BaseEstimator):
         disable_pbar,
     ):
         self.num_layers = num_layers
-        self.include_numeric = include_numeric
-        self.load_pretrain = load_pretrain
-        self.freeze_pretrain = freeze_pretrain
+        self.hidden_dim = hidden_dim
+        self.dropout_prob = dropout_prob
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.val_size = val_size
@@ -62,52 +66,45 @@ class BaseYateGNNEstimator(BaseEstimator):
         self.y_ = y
         self._set_task_specific_settings()
 
-        if self.include_numeric:
-            if X[0].x_num.size(1) == 0:
-                raise ValueError(
-                    "No numerical data found in the dataset. Please check the 'include_numeric' argument."
-                )
-            else:
-                pass
-            # Transform numericals
-            # self.num_transformer_ = PowerTransformer()
-            X = self._transform_numerical(X)
+        if isinstance(X, Tensor) == False:
+            X = torch.tensor(X, dtype=torch.float32)
+        if isinstance(y, Tensor) == False:
+            y = torch.tensor(y, dtype=torch.float32)
+
+        self.X_mean_ = torch.nanmean(X, dim=0)
+        for i in range(X.size(1)):
+            X[:, i] = torch.nan_to_num(X[:, i], nan=self.X_mean_[i])
 
         if self.num_model == 1:
-            _ = self._run_train(X, self.random_state)
+            _ = self._run_train(X, y, self.random_state)
         else:
             random_state = check_random_state(self.random_state)
             random_state_list = [
                 random_state.randint(1000) for _ in range(self.num_model)
             ]
             result_valid_loss = Parallel(n_jobs=self.n_jobs)(
-                delayed(self._run_train)(X, rs) for rs in random_state_list
+                delayed(self._run_train)(X, y, rs) for rs in random_state_list
             )
-            self._run_refit(X, result_valid_loss)
+            self._run_refit(X, y, result_valid_loss)
 
         self.is_fitted_ = True
-
         return self
 
-    def _run_train(self, X, random_state):
-        # Input dimension for numerical values
-        input_numeric_dim = X[0].x_num.size(1)
+    def _run_train(self, X, y, random_state):
+        input_dim = X.size(1)
 
-        # Set validation by val_size
-        idx_train, idx_valid = train_test_split(
-            np.arange(0, len(X)),
+        X_train, X_valid, y_train, y_valid = train_test_split(
+            X,
+            y,
             test_size=self.val_size,
             shuffle=True,
             random_state=random_state,
         )
-        ds_train = [X[i] for i in idx_train]
-        ds_valid = [X[i] for i in idx_valid]
 
-        # Set validation batch for evaluation
-        ds_valid_eval = self._set_data_eval(data=ds_valid)
+        ds_train = TabularDataset(X_train, y_train)
 
         # Load model and optimizer
-        model_run_train = self._load_model(input_numeric_dim)
+        model_run_train = self._load_model(input_dim)
         model_run_train.to(self.device_)
         optimizer = torch.optim.AdamW(
             model_run_train.parameters(), lr=self.learning_rate
@@ -116,8 +113,9 @@ class BaseYateGNNEstimator(BaseEstimator):
         # Train model
         train_loader = DataLoader(ds_train, batch_size=self.batch_size, shuffle=True)
         valid_loss_best = 9e15
+        es_counter = 0
         if self.early_stopping_patience is None:
-            patience = 200
+            patience = self.max_epoch
         else:
             patience = self.early_stopping_patience
 
@@ -127,7 +125,7 @@ class BaseYateGNNEstimator(BaseEstimator):
             disable=self.disable_pbar,
         ):
             self._run_epoch(model_run_train, optimizer, train_loader)
-            valid_loss = self._eval(model_run_train, ds_valid_eval)
+            valid_loss = self._eval(model_run_train, X_valid, y_valid)
             if valid_loss < valid_loss_best:
                 valid_loss_best = valid_loss
                 if self.num_model == 1:
@@ -139,31 +137,28 @@ class BaseYateGNNEstimator(BaseEstimator):
                     break
         return valid_loss_best
 
-    def _run_refit(self, X: list, result_valid_loss):
+    def _run_refit(self, X, y, result_valid_loss):
         # Load model and optimizer
-        input_numeric_dim = X[0].x_num.size(1)
-        model_run_refit = self._load_model(input_numeric_dim=input_numeric_dim)
+        input_dim = X.size(1)
+        model_run_refit = self._load_model(input_dim=input_dim)
         model_run_refit.to(self.device_)
         optimizer = torch.optim.AdamW(
             model_run_refit.parameters(), lr=self.learning_rate
         )
 
         # Statistics for stopping criterion in the refit
-        # valid_loss_best = min(result_valid_loss)
         valid_loss_mean = np.mean(result_valid_loss)
-        #     np.sort(result_valid_loss)[: int(self.num_model * 0.6)]
-        # )
         valid_loss_std = np.std(result_valid_loss) / np.sqrt(self.num_model)
+        # valid_loss_best = min(result_valid_loss)
 
         # Set train settings
-        max_epoch = 1000
+        max_epoch = 5000
         tol = 1.85 * valid_loss_std
 
-        # Set train batch for loss evaluation
-        ds_train_eval = self._set_data_eval(data=X)
+        ds_train = TabularDataset(X, y)
 
         # Train
-        train_loader = DataLoader(X, batch_size=self.batch_size, shuffle=True)
+        train_loader = DataLoader(ds_train, batch_size=self.batch_size, shuffle=True)
         train_loss_best = 9e15
         for ep in tqdm(
             range(1, max_epoch + 1),
@@ -171,7 +166,7 @@ class BaseYateGNNEstimator(BaseEstimator):
             disable=self.disable_pbar,
         ):
             self._run_epoch(model_run_refit, optimizer, train_loader)
-            train_loss = self._eval(model_run_refit, ds_train_eval)
+            train_loss = self._eval(model_run_refit, X, y)
             if train_loss < train_loss_best:
                 train_loss_best = train_loss
                 self.model_best_ = model_run_refit
@@ -187,11 +182,11 @@ class BaseYateGNNEstimator(BaseEstimator):
 
     def _run_epoch(self, model: torch.nn.Module, optimizer, train_loader):
         model.train()
-        for data in train_loader:  # Iterate in batches over the training dataset.
-            data.to(self.device_)
-            data.head_idx = data.ptr[:-1]
-            out = model(data)  # Perform a single forward pass.
-            target = data.y
+        for data_X, data_y in train_loader:
+            data_X = data_X.to(self.device_)
+            data_y = data_y.to(self.device_)
+            out = model(data_X)  # Perform a single forward pass.
+            target = data_y
             out = out.view(-1).to(torch.float64)
             target = target.to(torch.float64)
             loss = self.criterion_(out, target)  # Compute the loss.
@@ -199,109 +194,60 @@ class BaseYateGNNEstimator(BaseEstimator):
             optimizer.step()  # Update parameters based on gradients.
             optimizer.zero_grad()  # Clear gradients.
 
-    def _eval(self, model: torch.nn.Module, ds_eval):
+    def _eval(self, model: torch.nn.Module, X, y):
+        X = X.to(self.device_)
+        y = y.to(self.device_)
         with torch.no_grad():
             model.eval()
-            out = model(ds_eval)
-            target = ds_eval.y
+            out = model(X)
+            target = y
             out = out.view(-1).to(torch.float64)
             target = target.to(torch.float64)
             loss_eval = self.criterion_(out, target)
             loss_eval = round(loss_eval.detach().item(), 4)
         return loss_eval
 
-    def _set_data_eval(self, data: list):
-        make_batch = Batch()
-        with torch.no_grad():
-            ds_eval = make_batch.from_data_list(data, follow_batch=["edge_index"])
-            ds_eval.head_idx = ds_eval.ptr[:-1]
-            ds_eval.to(self.device_)
-        return ds_eval
-
     def _set_task_specific_settings(self):
         self.criterion_ = None
         self.output_dim_ = None
         self.model_task_ = None
 
-    def _transform_numerical(self, X):
-        make_batch = Batch()
-        data_batch = make_batch.from_data_list(X, follow_batch=["edge_index"])
-        X_num = data_batch.x_num.cpu().detach().numpy()
-        X_num = X_num.astype(np.float64)
-        # if self.is_fitted_ == False:
-        #     X_num = self.num_transformer_.fit_transform(X_num)
-        # else:
-        #     X_num = self.num_transformer_.transform(X_num)
-        X_num = power_transform(X_num)
-        X_num = torch.tensor(X_num)
-        X_num = torch.nan_to_num(X_num, nan=0)
-        data_batch.x_num = X_num
-        return data_batch.to_data_list()
-
-    def _load_model(self, input_numeric_dim: int):
+    def _load_model(self, input_dim: int):
         model_config = dict()
-        model_config["input_dim_x"] = 300
-        model_config["input_dim_e"] = 300
-        model_config["hidden_dim"] = 300
-        model_config["ff_dim"] = 300
-        model_config["num_heads"] = 12
-        model_config["num_layers"] = self.num_layers
-        model_config["input_numeric_dim"] = input_numeric_dim
+        model_config["input_dim"] = input_dim
+        model_config["hidden_dim"] = self.hidden_dim
         model_config["output_dim"] = self.output_dim_
-        model_config["include_numeric"] = self.include_numeric
-        if input_numeric_dim == 0:
-            model_config["include_numeric"] = False
-
-        if self.model_task_ == "regression":
-            model = YATE_GNNModel_Reg(**model_config)
-        else:
-            model = YATE_GNNModel_Cls(**model_config)
-
-        if self.load_pretrain:
-            config = load_config()
-            dir_model = config["pretrained_model_dir"]
-            model.load_state_dict(
-                torch.load(dir_model, map_location=self.device_), strict=False
-            )
-        if self.freeze_pretrain:
-            for param in model.ft_base.read_out_block.parameters():
-                param.requires_grad = False
-            for param in model.ft_base.layers.parameters():
-                param.requires_grad = False
+        model_config["dropout_prob"] = self.dropout_prob
+        model_config["num_layers"] = self.num_layers
+        model = SimpleMLP(**model_config)
         return model
 
 
-class YateGNNRegressor(RegressorMixin, BaseYateGNNEstimator):
-    """Yate Graph Neural Network for Regression.
-
-    This estimator is GNN model compatible with the YATE pretrained model
-
-    """
+class SimpleMLPRegressor(RegressorMixin, BaseSimpleMLPEstimator):
+    """ """
 
     def __init__(
         self,
         *,
         loss: str = "absolute_error",
-        num_layers: int = 0,
-        include_numeric: bool = True,
-        load_pretrain: bool = True,
-        freeze_pretrain: bool = True,
+        num_layers: int = 4,
+        hidden_dim: int = 256,
+        dropout_prob: float = 0.2,
         learning_rate: float = 1e-3,
         batch_size: int = 128,
         val_size: float = 0.1,
-        num_model: int = 10,
+        num_model: int = 1,
         max_epoch: int = 200,
         early_stopping_patience: Union[None, int] = 40,
         n_jobs: int = 1,
-        device="cpu",
+        device: str = "cpu",
         random_state: int = 0,
         disable_pbar: bool = True,
     ):
-        super(YateGNNRegressor, self).__init__(
+        super(SimpleMLPRegressor, self).__init__(
             num_layers=num_layers,
-            include_numeric=include_numeric,
-            load_pretrain=load_pretrain,
-            freeze_pretrain=freeze_pretrain,
+            hidden_dim=hidden_dim,
+            dropout_prob=dropout_prob,
             learning_rate=learning_rate,
             batch_size=batch_size,
             val_size=val_size,
@@ -318,20 +264,16 @@ class YateGNNRegressor(RegressorMixin, BaseYateGNNEstimator):
 
     def predict(self, X):
         check_is_fitted(self, "is_fitted_")
-
-        if self.include_numeric:
-            # Transform numericals
-            X_total = self.X_ + X
-            X = self._transform_numerical(X_total)
-            X = X[len(self.X_) :]
-
-        # Obtain the batch to feed into the network
-        ds_predict_eval = self._set_data_eval(data=X)
+        if isinstance(X, Tensor) == False:
+            X = torch.tensor(X, dtype=torch.float32)
+        for i in range(X.size(1)):
+            X[:, i] = torch.nan_to_num(X[:, i], nan=self.X_mean_[i])
+        X = X.to(self.device_)
 
         # Obtain the predicitve output
         with torch.no_grad():
             self.model_best_.eval()
-            out = self.model_best_(ds_predict_eval)
+            out = self.model_best_(X)
         out = out.cpu().detach().numpy()
         return out
 
@@ -345,37 +287,31 @@ class YateGNNRegressor(RegressorMixin, BaseYateGNNEstimator):
         self.model_task_ = "regression"
 
 
-class YateGNNClassifier(ClassifierMixin, BaseYateGNNEstimator):
-    """Yate Graph Neural Network for Classification.
-
-    This estimator is GNN model compatible with the YATE pretrained model
-
-    """
+class SimpleMLPClassifier(ClassifierMixin, BaseSimpleMLPEstimator):
+    """ """
 
     def __init__(
         self,
         *,
         loss: str = "binary_crossentropy",
-        num_layers: int = 0,
-        include_numeric: bool = True,
-        load_pretrain: bool = True,
-        freeze_pretrain: bool = True,
+        num_layers: int = 4,
+        hidden_dim: int = 256,
+        dropout_prob: float = 0.2,
         learning_rate: float = 1e-3,
         batch_size: int = 128,
         val_size: float = 0.1,
-        num_model: int = 10,
+        num_model: int = 1,
         max_epoch: int = 200,
         early_stopping_patience: Union[None, int] = 40,
         n_jobs: int = 1,
-        device="cpu",
+        device: str = "cpu",
         random_state: int = 0,
         disable_pbar: bool = True,
     ):
-        super(YateGNNClassifier, self).__init__(
+        super(SimpleMLPClassifier, self).__init__(
             num_layers=num_layers,
-            include_numeric=include_numeric,
-            load_pretrain=load_pretrain,
-            freeze_pretrain=freeze_pretrain,
+            hidden_dim=hidden_dim,
+            dropout_prob=dropout_prob,
             learning_rate=learning_rate,
             batch_size=batch_size,
             val_size=val_size,
@@ -392,6 +328,11 @@ class YateGNNClassifier(ClassifierMixin, BaseYateGNNEstimator):
 
     def predict(self, X):
         check_is_fitted(self, "is_fitted_")
+        if isinstance(X, Tensor) == False:
+            X = torch.tensor(X, dtype=torch.float32)
+        for i in range(X.size(1)):
+            X[:, i] = torch.nan_to_num(X[:, i], nan=self.X_mean_[i])
+        X = X.to(self.device_)
 
         if self.loss == "binary_crossentropy":
             return np.round(self.predict_proba(X))
@@ -400,22 +341,24 @@ class YateGNNClassifier(ClassifierMixin, BaseYateGNNEstimator):
 
     def predict_proba(self, X):
         check_is_fitted(self, "is_fitted_")
+        if isinstance(X, Tensor) == False:
+            X = torch.tensor(X, dtype=torch.float32)
+        for i in range(X.size(1)):
+            X[:, i] = torch.nan_to_num(X[:, i], nan=self.X_mean_[i])
+        X = X.to(self.device_)
         return self._get_predict_prob(X)
 
+    def decision_function(self, X):
+        decision = self.predict_proba(X)
+        if decision.shape[1] == 1:
+            decision = decision.ravel()
+        return decision
+
     def _get_predict_prob(self, X):
-        if self.include_numeric:
-            # Transform numericals
-            # X_total = self.X_ + X
-            X = self._transform_numerical(X)
-            # X = X[len(self.X_) :]
-
-        # Obtain the batch to feed into the network
-        ds_predict_eval = self._set_data_eval(data=X)
-
         # Obtain the predicitve output
         with torch.no_grad():
             self.model_best_.eval()
-            out = self.model_best_(ds_predict_eval)
+            out = self.model_best_(X)
         if self.loss == "binary_crossentropy":
             out = torch.sigmoid(out)
         elif self.loss == "categorical_crossentropy":

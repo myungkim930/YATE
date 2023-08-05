@@ -6,6 +6,7 @@ import pickle
 from time import perf_counter
 import pandas as pd
 import numpy as np
+import platform
 from sklearn.model_selection import (
     train_test_split,
     RandomizedSearchCV,
@@ -22,10 +23,19 @@ from sklearn.ensemble import (
     HistGradientBoostingRegressor,
     HistGradientBoostingClassifier,
 )
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import PowerTransformer, OrdinalEncoder
+from baselines.resnet import (
+    create_resnet_regressor_skorch,
+    create_resnet_classifier_skorch,
+)
+from baselines.tabpfn_classifier import TabpfnClassifier
+from baselines.simple_mlp_estimator import SimpleMLPRegressor, SimpleMLPClassifier
 from catboost import CatBoostRegressor, CatBoostClassifier
 from downstream import YateGNNRegressor, YateGNNClassifier
-from xgboost import XGBRegressor, XGBClassifier
-from utils import load_config, TabpfnClassifier
+from utils import load_config
 from scipy.stats import loguniform, lognorm, randint, uniform, norm
 
 
@@ -39,6 +49,14 @@ def _run_model(
     random_state,
     device,
 ):
+    # Basic information on computers
+    node_name = os.environ.get("SLURMD_NODENAME", "Unknown")
+    processor = platform.processor()
+    n_cpus_on_node = os.environ.get("SLURM_CPUS_ON_NODE")
+    print(f"Running on node: {node_name}")
+    print(f"Processor: {processor}")
+    print(f"Number of cpus on node: {n_cpus_on_node}")
+
     # Load data
     data_pd, data_additional = _load_data(data_name, config)
 
@@ -67,18 +85,27 @@ def _run_model(
     # Prepare data
     if "lm" in preprocess_method:
         data = data_additional[preprocess_method].copy()
+        if include_numeric == False:
+            data.drop(columns=num_col_names, inplace=True)
+        data = pd.concat([data, data_pd[target_name]], axis=1)
     elif "fasttext" in preprocess_method:
         data = data_additional["fasttext"].copy()
         data.drop(columns="name", inplace=True)
         data = pd.concat([data, data_pd[target_name]], axis=1)
+        cat_col_names.remove("name")
+        cat_col_names = []
     else:
+        print("No fasttext or lm model is specified.")
         data = data_pd.copy()
 
     # Preprocess data with splits
+    stratify = None
+    if task == "classification":
+        stratify = data_pd[target_name]
 
     if "yate-gnn" in preprocess_method:
         X_train, X_test, y_train, y_test = _prepare_yate_gnn(
-            data, target_name, num_train, random_state
+            data, target_name, num_train, random_state, stratify
         )
     elif "yate-feature" in preprocess_method:
         extract_state = preprocess_method.split("-")[-1]
@@ -89,6 +116,7 @@ def _run_model(
             extract_state,
             include_numeric,
             random_state,
+            stratify,
             device,
         )
     elif "tablevectorizer" in preprocess_method:
@@ -102,6 +130,7 @@ def _run_model(
             target_name,
             num_train,
             random_state,
+            stratify,
         )
     elif "catboost" in preprocess_method:
         X_train, X_test, y_train, y_test = _prepare_catboost(
@@ -110,17 +139,48 @@ def _run_model(
             cat_col_names,
             num_train,
             random_state,
+            stratify,
+        )
+    elif "mlp" in preprocess_method:
+        X_train, X_test, y_train, y_test = _prepare_mlp(
+            data, target_name, num_train, random_state, stratify
+        )
+    elif "resnet" in preprocess_method:
+        X_train, X_test, y_train, y_test = _prepare_resnet(
+            data,
+            target_name,
+            cat_col_names,
+            num_train,
+            random_state,
+            stratify,
         )
     else:
         X_train, X_test, y_train, y_test = _set_split(
             data,
             target_name,
             num_train,
-            random_state=random_state,
+            random_state,
+            stratify,
         )
+        X_train = X_train.to_numpy().astype(np.float32)
+        X_test = X_test.to_numpy().astype(np.float32)
+        y_train = y_train.astype(np.float32)
+        y_test = y_test.astype(np.float32)
+
+    # if "resnet" in estim_method:
+    #     print("convert to numpy")
+    #     if isinstance(X_train, pd.DataFrame):
+    #         X_train = X_train.to_numpy().astype(np.float32)
+    #     if isinstance(X_test, pd.DataFrame):
+    #         X_test = X_test.to_numpy().astype(np.float32)
+    #     y_train = y_train.astype(np.float32)
+    #     y_test = y_test.astype(np.float32)
 
     # Set cross-validation settings
-    cv = RepeatedKFold(n_splits=5, n_repeats=5, random_state=1234)
+    if "yate-gnn" in method:
+        cv = RepeatedKFold(n_splits=5, n_repeats=1, random_state=1234)
+    else:
+        cv = RepeatedKFold(n_splits=5, n_repeats=5, random_state=1234)
 
     # Set Parameter distributions
     param_distributions = _set_param_distributions(
@@ -130,15 +190,22 @@ def _run_model(
 
     # Set estimator
     if "catboost" in estim_method:
-        cat_features = [data.columns.get_loc(i) for i in cat_col_names]
+        data_x = data.drop(columns=[target_name])
+        cat_features = [data_x.columns.get_loc(i) for i in cat_col_names]
     else:
         cat_features = None
+    if "resnet" in estim_method:
+        # +1 for unknown category
+        categories = [len(pd.unique(data[col])) + 1 for col in cat_col_names]
+    else:
+        categories = None
     estimator = _assign_estimator(
         estim_method,
         task,
         include_numeric,
         device,
         cat_features,
+        categories,
     )
 
     # Optimization
@@ -152,19 +219,7 @@ def _run_model(
             refit=refit,
             n_jobs=n_jobs,
         )
-    elif "tabpfn" in method:
-        refit, n_jobs = True, 25
-        hyperparameter_search = GridSearchCV(
-            estimator,
-            param_grid=param_distributions,
-            cv=cv,
-            scoring=scoring,
-            refit=refit,
-            n_jobs=n_jobs,
-        )
-    elif "catboost" in method:
-        hyperparameter_search = estimator
-    else:
+    elif "yate-feature" in method:
         n_iter, refit, n_jobs = 100, True, -1
         hyperparameter_search = RandomizedSearchCV(
             estimator,
@@ -175,6 +230,96 @@ def _run_model(
             refit=refit,
             n_jobs=n_jobs,
         )
+    elif "tablevectorizer" in method:
+        n_iter, refit, n_jobs = 500, True, -1
+        hyperparameter_search = RandomizedSearchCV(
+            estimator,
+            param_distributions=param_distributions,
+            n_iter=n_iter,
+            cv=cv,
+            scoring=scoring,
+            refit=refit,
+            n_jobs=n_jobs,
+        )
+    elif "lm-" in method:
+        n_iter, refit, n_jobs = 500, True, -1
+        hyperparameter_search = RandomizedSearchCV(
+            estimator,
+            param_distributions=param_distributions,
+            n_iter=n_iter,
+            cv=cv,
+            scoring=scoring,
+            refit=refit,
+            n_jobs=n_jobs,
+        )
+    elif "fasttext_histgb" in method:
+        n_iter, refit, n_jobs = 500, True, 25
+        hyperparameter_search = RandomizedSearchCV(
+            estimator,
+            param_distributions=param_distributions,
+            n_iter=n_iter,
+            cv=cv,
+            scoring=scoring,
+            refit=refit,
+            n_jobs=n_jobs,
+        )
+    elif "catboost" in method:
+        n_iter, refit, n_jobs = 500, True, 25
+        hyperparameter_search = RandomizedSearchCV(
+            estimator,
+            param_distributions=param_distributions,
+            n_iter=n_iter,
+            cv=cv,
+            scoring=scoring,
+            refit=refit,
+            n_jobs=n_jobs,
+        )
+        # hyperparameter_search = estimator
+    elif "mlp" in method:
+        n_iter, refit, n_jobs = 100, True, -1
+        hyperparameter_search = RandomizedSearchCV(
+            estimator,
+            param_distributions=param_distributions,
+            n_iter=n_iter,
+            cv=cv,
+            scoring=scoring,
+            refit=refit,
+            n_jobs=n_jobs,
+        )
+    elif "resnet" in method:
+        n_iter, refit, n_jobs = 100, True, -1
+        hyperparameter_search = RandomizedSearchCV(
+            estimator,
+            param_distributions=param_distributions,
+            n_iter=n_iter,
+            cv=cv,
+            scoring=scoring,
+            refit=refit,
+            n_jobs=n_jobs,
+            error_score="raise",
+        )
+    elif "tabpfn" in method:
+        hyperparameter_search = estimator
+        # refit, n_jobs = True, 25
+        # hyperparameter_search = GridSearchCV(
+        #     estimator,
+        #     param_grid=param_distributions,
+        #     cv=cv,
+        #     scoring=scoring,
+        #     refit=refit,
+        #     n_jobs=n_jobs,
+        # )
+    # else:
+    #     n_iter, refit, n_jobs = 100, True, -1
+    #     hyperparameter_search = RandomizedSearchCV(
+    #         estimator,
+    #         param_distributions=param_distributions,
+    #         n_iter=n_iter,
+    #         cv=cv,
+    #         scoring=scoring,
+    #         refit=refit,
+    #         n_jobs=n_jobs,
+    #     )
 
     marker = f"{data_name}_{method}_num_train-{num_train}_numeric-{include_numeric}_rs-{random_state}"
     print(marker + " start")
@@ -187,6 +332,7 @@ def _run_model(
         estimator_refit = _set_refit_yate_gnn(
             hyperparameter_search.best_params_,
             task,
+            num_train,
             include_numeric,
             device,
         )
@@ -200,6 +346,12 @@ def _run_model(
             y_pred = hyperparameter_search.predict(X_test)
         else:
             y_pred = hyperparameter_search.predict_proba(X_test)
+
+    if y_pred.shape[1] == 1:
+        y_pred = y_pred.ravel()
+    if task == "classification":
+        if len(y_pred.shape) == 2:
+            y_pred = y_pred[:, 1]
 
     score = _return_score(y_test, y_pred, task)
     end_time = perf_counter()
@@ -221,6 +373,9 @@ def _run_model(
     results_model = pd.DataFrame([results_], columns=result_criterion)
     results_model.columns = f"{method}_" + results_model.columns
     results_model["random_state"] = random_state
+    results_model["processor"] = processor
+    results_model["slurm_node"] = node_name
+    results_model["n_cpus_on_node"] = n_cpus_on_node
 
     marker = f"{data_name}_{method}_num_train-{num_train}_numeric-{include_numeric}_rs-{random_state}"
     results_model_dir = result_save_dir_base + f"/score/{marker}.csv"
@@ -228,7 +383,7 @@ def _run_model(
 
     results_model.to_csv(results_model_dir, index=False)
 
-    if "catboost" not in method:
+    if "tabpfn" not in method:
         cv_results = pd.DataFrame(hyperparameter_search.cv_results_)
         cv_results = cv_results.rename(_shorten_param, axis=1)
         cv_results.to_csv(log_dir, index=False)
@@ -258,7 +413,7 @@ def _load_data(data_name, config):
 
 
 # Set train/test split given the random state
-def _set_split(data, target_name, num_train, random_state):
+def _set_split(data, target_name, num_train, random_state, stratify):
     num_data = len(data)
     X = data.drop(columns=target_name)
     y = data[target_name]
@@ -269,11 +424,12 @@ def _set_split(data, target_name, num_train, random_state):
         test_size=int(num_data - num_train),
         shuffle=True,
         random_state=random_state,
+        stratify=stratify,
     )
     return X_train, X_test, y_train, y_test
 
 
-def _prepare_yate_gnn(data_pd, target_name, num_train, random_state):
+def _prepare_yate_gnn(data_pd, target_name, num_train, random_state, stratify):
     from graphlet_construction import Table2GraphTransformer
 
     data = data_pd.copy()
@@ -282,6 +438,7 @@ def _prepare_yate_gnn(data_pd, target_name, num_train, random_state):
         target_name,
         num_train,
         random_state=random_state,
+        stratify=stratify,
     )
     preprocessor = Table2GraphTransformer()
     X_train = preprocessor.fit_transform(X_train, y=y_train)
@@ -296,25 +453,50 @@ def _prepare_yate_feature_based(
     extract_state,
     include_numeric,
     random_state,
+    stratify,
     device,
 ):
-    from downstream import YATE_feat_extractor
+    from downstream import table_to_yate_features
+    from sklearn.preprocessing import MinMaxScaler
 
     data = data_pd.copy()
-    yate_feat_extractor = YATE_feat_extractor(n_layers=1, device=device)
     X_train, X_test, y_train, y_test = _set_split(
         data,
         target_name,
         num_train,
         random_state=random_state,
+        stratify=stratify,
     )
     if extract_state == "initial":
-        X_train = yate_feat_extractor.extract(X_train, "initial", include_numeric)
-        X_test = yate_feat_extractor.extract(X_test, "initial", include_numeric)
+        X_train = table_to_yate_features(
+            X_train,
+            "initial",
+            include_numeric,
+            device=device,
+        )
+        X_test = table_to_yate_features(
+            X_test,
+            "initial",
+            include_numeric,
+            device=device,
+        )
     else:
-        X_train = yate_feat_extractor.extract(X_train, "pretrained", include_numeric)
-        X_test = yate_feat_extractor.extract(X_test, "pretrained", include_numeric)
-    return np.array(X_train), np.array(X_test), np.array(y_train), np.array(y_test)
+        X_train = table_to_yate_features(
+            X_train,
+            "pretrained",
+            include_numeric,
+            device=device,
+        )
+        X_test = table_to_yate_features(
+            X_test,
+            "pretrained",
+            include_numeric,
+            device=device,
+        )
+    min_max_scaler = MinMaxScaler()
+    X_train = min_max_scaler.fit_transform(X_train)
+    X_test = min_max_scaler.transform(X_test)
+    return np.array(X_train), np.array(X_test), y_train, y_test
 
 
 def _prepare_tablevectorizer(
@@ -324,30 +506,44 @@ def _prepare_tablevectorizer(
     target_name,
     num_train,
     random_state,
+    stratify,
 ):
     from dirty_cat import TableVectorizer
 
     data = data_pd.copy()
     if include_ken:
-        name_col = data_pd["name"]
-        name_col = "<" + name_col + ">"
-        name_col = name_col.str.replace(" ", "_")
-        data["name"] = name_col
-        data_aug = data.merge(right=data_additional["ken"], how="inner", on="name")
+        data["name"] = data["name"].str.lower()
+        data_ken = data_additional["ken"].copy()
+        data_ken["name"] = data_ken["name"].str.lower()
+        data_ken["name"] = (
+            data_ken["name"]
+            .str.replace("<", "")
+            .str.replace(">", "")
+            .str.replace("_", " ")
+        )
+        data_aug = data.merge(right=data_ken, how="left", on="name")
         data = data_aug.copy()
     X_train, X_test, y_train, y_test = _set_split(
         data,
         target_name,
         num_train,
         random_state=random_state,
+        stratify=stratify,
     )
-    preprocessor = TableVectorizer(auto_cast=True, sparse_threshold=0)
+    preprocessor = TableVectorizer(auto_cast=False, sparse_threshold=0)
     X_train = preprocessor.fit_transform(X_train, y=y_train)
     X_test = preprocessor.transform(X_test)
     return X_train, X_test, y_train, y_test
 
 
-def _prepare_catboost(data_pd, target_name, cat_col_names, num_train, random_state):
+def _prepare_catboost(
+    data_pd,
+    target_name,
+    cat_col_names,
+    num_train,
+    random_state,
+    stratify,
+):
     data = data_pd.copy()
     data_cat = data_pd[cat_col_names]
     data_cat = data_cat.replace(np.nan, "nan", regex=True)
@@ -359,8 +555,83 @@ def _prepare_catboost(data_pd, target_name, cat_col_names, num_train, random_sta
         target_name,
         num_train,
         random_state=random_state,
+        stratify=stratify,
     )
     return np.array(X_train), np.array(X_test), np.array(y_train), np.array(y_test)
+
+
+def _prepare_mlp(data_pd, target_name, num_train, random_state, stratify):
+    data = data_pd.copy()
+    X_train, X_test, y_train, y_test = _set_split(
+        data,
+        target_name,
+        num_train,
+        random_state=random_state,
+        stratify=stratify,
+    )
+    preprocessor = OrdinalEncoder(
+        handle_unknown="use_encoded_value", unknown_value=np.nan
+    )
+    X_train = preprocessor.fit_transform(X_train, y=y_train)
+    X_test = preprocessor.transform(X_test)
+    return X_train, X_test, y_train, y_test
+
+
+def _prepare_resnet(
+    data_pd,
+    target_name,
+    cat_col_names,
+    num_train,
+    random_state,
+    stratify,
+):
+    data = data_pd.copy()
+    X_train, X_test, y_train, y_test = _set_split(
+        data,
+        target_name,
+        num_train,
+        random_state=random_state,
+        stratify=stratify,
+    )
+    numerical_preprocessor = Pipeline(
+        [
+            ("power_transform", PowerTransformer()),
+            ("imputer", SimpleImputer(strategy="mean")),
+        ]
+    )
+    categorical_preprocessor = Pipeline(
+        [
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            (
+                "encoder",
+                OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1),
+            ),
+        ]
+    )
+    print("cat cols", cat_col_names)
+    print("num cols", [col for col in X_train.columns if col not in cat_col_names])
+    preprocessor = ColumnTransformer(
+        [
+            (
+                "numerical",
+                numerical_preprocessor,
+                [col for col in X_train.columns if col not in cat_col_names],
+            ),
+            ("categorical", categorical_preprocessor, cat_col_names),
+        ]
+    )
+    X_train = preprocessor.fit_transform(X_train, y=y_train)
+    X_test = preprocessor.transform(X_test)
+
+    # TODO export categories to the main thing
+    # and use them here
+
+    return (
+        np.array(X_train).astype(np.float32),
+        np.array(X_test).astype(np.float32),
+        np.array(y_train).astype(np.float32),
+        np.array(y_test).astype(np.float32),
+    )
 
 
 def _assign_estimator(
@@ -369,6 +640,7 @@ def _assign_estimator(
     include_numeric,
     device,
     cat_features,
+    categories,
 ):
     if estim_method == "yate-gnn":
         fixed_params = dict()
@@ -385,7 +657,7 @@ def _assign_estimator(
         fixed_params["cat_features"] = cat_features
         fixed_params["verbose"] = False
         fixed_params["allow_writing_files"] = False
-        fixed_params["thread_count"] = 5
+        fixed_params["thread_count"] = 1
         # fixed_params["boosting_type"] = "Plain"
         # fixed_params["leaf_estimation_iterations"] = 5
         if task == "regression":
@@ -397,61 +669,106 @@ def _assign_estimator(
             estimator = HistGradientBoostingRegressor()
         else:
             estimator = HistGradientBoostingClassifier()
-    elif estim_method == "xgboost":
-        if task == "regression":
-            estimator = XGBRegressor()
-        else:
-            estimator = XGBClassifier()
     elif estim_method == "tabpfn":
         estimator = TabpfnClassifier()
+    elif estim_method == "mlp":
+        if task == "regression":
+            estimator = SimpleMLPRegressor()
+        else:
+            estimator = SimpleMLPClassifier()
+    elif estim_method == "resnet":
+        if task == "regression":
+            estimator = create_resnet_regressor_skorch(
+                cat_features=cat_features,
+                categories=categories,
+            )
+        else:
+            estimator = create_resnet_classifier_skorch(
+                cat_features=cat_features,
+                categories=categories,
+            )
     return estimator
 
 
 def _set_param_distributions(estim_method: str, num_train: int):
     param_distributions = dict()
     if estim_method == "yate-gnn":
-        param_distributions["learning_rate"] = [1e-3, 2.5e-3, 5e-3, 7.5e-4, 5e-4]
-        param_distributions["batch_size"] = [128, 256]
-        if num_train < 129:
-            param_distributions["batch_size"] = [num_train]
-        elif 128 < num_train < 256:
-            param_distributions["batch_size"] = [128]
+        param_distributions["learning_rate"] = [
+            # 5e-2,
+            # 2.5e-2,
+            1e-2,
+            7.5e-3,
+            5e-3,
+            2.5e-3,
+            1e-3,
+            7.5e-4,
+            5e-4,
+            2.5e-4,
+            1e-4,
+        ]
+        param_distributions["batch_size"] = [64, 128]
     elif estim_method == "catboost":
-        param_distributions["learning_rate"] = uniform(1e-3, 1e-2)
+        param_distributions["learning_rate"] = loguniform(1e-5, 1)
+        param_distributions["random_strength"] = randint(1, 21)
+        param_distributions["one_hot_max_size"] = randint(0, 26)
+        param_distributions["l2_leaf_reg"] = loguniform(1, 10)
+        param_distributions["bagging_temperature"] = uniform(0, 1)
         param_distributions["iterations"] = randint(400, 1001)
-        param_distributions["depth"] = randint(4, 11)
-        param_distributions["l2_leaf_reg"] = loguniform(2, 10)
-        param_distributions["random_strength"] = uniform(0, 10)
     elif estim_method == "histgb":
-        param_distributions["loss"] = ["squared_error", "absolute_error"]
         param_distributions["learning_rate"] = loguniform(1e-2, 10)
-        # param_distributions["l2_regularization"] = loguniform(1e-6, 1e3)
         param_distributions["max_depth"] = [None, 2, 3, 4]
         param_distributions["max_leaf_nodes"] = norm_int(31, 5)
         param_distributions["min_samples_leaf"] = norm_int(20, 2)
-    elif estim_method == "xgboost":
-        param_distributions["max_depth"] = randint(1, 11)
-        param_distributions["n_estimators"] = list(range(100, 6000, 200))
-        param_distributions["min_child_weight"] = loguniform_int(1, 100)
-        param_distributions["subsample"] = uniform(0.5, 0.5)
-        param_distributions["learning_rate"] = loguniform(1e-5, 0.7)
-        param_distributions["colsample_bylevel"] = uniform(0.5, 0.5)
-        param_distributions["colsample_bytree"] = uniform(0.5, 0.5)
-        param_distributions["gamma"] = loguniform(1e-8, 7)
-        param_distributions["reg_alpha"] = loguniform(1e-8, 1e2)
-        param_distributions["reg_lambda"] = loguniform(1, 4)
+        # param_distributions["l2_regularization"] = loguniform(1e-6, 1e3)
+    elif estim_method == "mlp":
+        param_distributions["num_layers"] = randint(1, 9)
+        param_distributions["hidden_dim"] = randint(16, 1025)
+        param_distributions["dropout_prob"] = [0, 0.1, 0.2, 0.3, 0.4, 0.5]
+        param_distributions["learning_rate"] = loguniform(1e-5, 1e-2)
+        param_distributions["batch_size"] = [256, 512, 1024]
+    elif estim_method == "resnet":
+        param_distributions = {
+            "module__activation": ["reglu"],
+            "module__normalization": ["batchnorm", "layernorm"],
+            # "module__n_layers": randint(1, 17),  # equivalent to q_uniform(1, 16)
+            "module__n_layers": randint(1, 9),
+            # "module__d": randint(64, 1025),  # equivalent to q_uniform(64, 1024)
+            "module__d": randint(32, 513),
+            "module__d_hidden_factor": uniform(
+                1, 3
+            ),  # uniform distribution between 1 and 4
+            "module__hidden_dropout": uniform(
+                0.0, 0.5
+            ),  # uniform distribution between 0.0 and 0.5
+            "module__residual_dropout": uniform(
+                0.0, 0.5
+            ),  # uniform distribution between 0.0 and 0.5
+            "lr": loguniform(
+                1e-5, 1e-2
+            ),  # log uniform distribution between 1e-5 and 1e-2
+            "optimizer__weight_decay": loguniform(
+                1e-8, 1e-3
+            ),  # log uniform distribution between 1e-8 and 1e-3
+            # "module__d_embedding": randint(64, 513),  # equivalent to q_uniform(64, 512)
+            "module__d_embedding": randint(32, 513),
+            # "lr_scheduler": [True, False]  # two possible values
+        }
     else:
-        param_distributions["n_ensemble_configurations"] = list(range(1, 101))
+        pass
+        # param_distributions["n_ensemble_configurations"] = list(range(1, 101))
     return param_distributions
 
 
-def _set_refit_yate_gnn(best_param, task, include_numeric, device):
+def _set_refit_yate_gnn(best_param, task, num_train, include_numeric, device):
     # estimator
     fixed_params = dict()
     fixed_params["include_numeric"] = include_numeric
     fixed_params["device"] = device
-    fixed_params["num_model"] = 30
-    fixed_params["n_jobs"] = 10
+    fixed_params["num_model"] = 1
+    fixed_params["n_jobs"] = 1
+    if num_train < 513:
+        fixed_params["num_model"] = 30
+        fixed_params["n_jobs"] = 10
     estimator_params_name = [name for name in best_param.keys() if "estimator" in name]
     estimator_params = {
         name.replace("estimator__", ""): best_param[name]
@@ -470,7 +787,7 @@ def _set_score_criterion(task):
         scoring = "r2"
         score_criterion = ["r2", "rmse"]
     else:
-        scoring = "auc"
+        scoring = "roc_auc"
         score_criterion = ["auc", "avg_precision"]
     score_criterion += ["run_time"]
     return scoring, score_criterion
@@ -528,7 +845,7 @@ def main(data_name, num_train, include_numeric, method, random_state, device):
     _, data_additional = _load_data(data_name, config)
 
     # Setting methods
-    if method == "all":
+    if "all" in method:
         mode = data_additional["mode"]
         if mode == "A":
             method_list = config["comparing_methods"]
@@ -541,13 +858,18 @@ def main(data_name, num_train, include_numeric, method, random_state, device):
                 method for method in config["comparing_methods"] if "ken" not in method
             ]
             method_list = [
-                method for method in method_list if "_fasttext_" not in method
+                method for method in method_list if "fasttext_" not in method
             ]
 
         if data_additional["task"] == "regression":
             method_list.remove("tabpfn")
+
+        if data_additional["task"] == "classfication":
+            method_list.remove("fasttext_resnet")
+            method_list.remove("resnet")
+
     else:
-        method_list = [method]
+        method_list = method
 
     for method_name in method_list:
         _run_model(
@@ -588,6 +910,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-m",
         "--method",
+        nargs="+",
         type=str,
         help="Method to evaluate",
     )

@@ -8,7 +8,7 @@ import copy
 from typing import Union
 from torch_geometric.loader import DataLoader
 from torch_geometric.data import Batch
-from sklearn.preprocessing import power_transform, PowerTransformer
+from sklearn.preprocessing import PowerTransformer
 from sklearn.model_selection import train_test_split
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.utils.validation import check_is_fitted, check_random_state
@@ -62,6 +62,11 @@ class BaseYateGNNEstimator(BaseEstimator):
         self.y_ = y
         self._set_task_specific_settings()
 
+        if self.early_stopping_patience is None:
+            self.patience_ = self.max_epoch
+        else:
+            self.patience_ = self.early_stopping_patience
+
         if self.include_numeric:
             if X[0].x_num.size(1) == 0:
                 raise ValueError(
@@ -74,7 +79,7 @@ class BaseYateGNNEstimator(BaseEstimator):
             X = self._transform_numerical(X)
 
         if self.num_model == 1:
-            _ = self._run_train(X, self.random_state)
+            self.valid_loss_ = self._run_train(X, self.random_state)
         else:
             random_state = check_random_state(self.random_state)
             random_state_list = [
@@ -83,27 +88,50 @@ class BaseYateGNNEstimator(BaseEstimator):
             result_valid_loss = Parallel(n_jobs=self.n_jobs)(
                 delayed(self._run_train)(X, rs) for rs in random_state_list
             )
+            self.valid_loss_ = result_valid_loss
             self._run_refit(X, result_valid_loss)
-        self.result_valid_loss_ = result_valid_loss
+
         self.is_fitted_ = True
 
         return self
+
+    def extract_features(self, X):
+        check_is_fitted(self, "is_fitted_")
+
+        model_extract = copy.deepcopy(self.model_best_)
+        model_extract.ft_classifier = torch.nn.Identity()
+        model_extract.eval()
+
+        data_batch = self._set_data_eval(X)
+
+        with torch.no_grad():
+            X_extract = model_extract(data_batch)
+
+        X_extract = X_extract.cpu().detach().numpy()
+        X_extract = X_extract.astype(np.float32)
+
+        return X_extract
 
     def _run_train(self, X, random_state):
         # Input dimension for numerical values
         input_numeric_dim = X[0].x_num.size(1)
 
         # Set validation by val_size
+        stratify = None
+        if self.model_task_ == "classification":
+            stratify = self.y_
         idx_train, idx_valid = train_test_split(
             np.arange(0, len(X)),
             test_size=self.val_size,
             shuffle=True,
+            stratify=stratify,
             random_state=random_state,
         )
         ds_train = [X[i] for i in idx_train]
         ds_valid = [X[i] for i in idx_valid]
 
         # Set validation batch for evaluation
+        # ds_train_eval = self._set_data_eval(data=ds_train)
         ds_valid_eval = self._set_data_eval(data=ds_valid)
 
         # Load model and optimizer
@@ -116,10 +144,6 @@ class BaseYateGNNEstimator(BaseEstimator):
         # Train model
         train_loader = DataLoader(ds_train, batch_size=self.batch_size, shuffle=True)
         valid_loss_best = 9e15
-        if self.early_stopping_patience is None:
-            patience = 200
-        else:
-            patience = self.early_stopping_patience
 
         for _ in tqdm(
             range(1, self.max_epoch + 1),
@@ -135,7 +159,7 @@ class BaseYateGNNEstimator(BaseEstimator):
                 es_counter = 0
             else:
                 es_counter += 1
-                if es_counter > patience:
+                if es_counter > self.patience_:
                     break
         return valid_loss_best
 
@@ -149,15 +173,13 @@ class BaseYateGNNEstimator(BaseEstimator):
         )
 
         # Statistics for stopping criterion in the refit
-        # valid_loss_best = min(result_valid_loss)
         valid_loss_mean = np.mean(result_valid_loss)
-        #     np.sort(result_valid_loss)[: int(self.num_model * 0.6)]
-        # )
         valid_loss_std = np.std(result_valid_loss) / np.sqrt(self.num_model)
+        # valid_loss_best = min(result_valid_loss)
 
         # Set train settings
-        max_epoch = 1000
-        tol = 1.85 * valid_loss_std
+        max_epoch = self.max_epoch
+        tol = self.tol_ * valid_loss_std
 
         # Set train batch for loss evaluation
         ds_train_eval = self._set_data_eval(data=X)
@@ -180,7 +202,7 @@ class BaseYateGNNEstimator(BaseEstimator):
                     break
             else:
                 es_counter += 1
-                if es_counter > max_epoch:  # self.patience:
+                if es_counter > self.patience_:  # max_epoch, self.patience_
                     break
             if ep == max_epoch and es_counter == 0:
                 self.model_best_ = model_run_refit
@@ -232,7 +254,6 @@ class BaseYateGNNEstimator(BaseEstimator):
             X_num = self.num_transformer_.fit_transform(X_num)
         else:
             X_num = self.num_transformer_.transform(X_num)
-        # X_num = power_transform(X_num)
         X_num = torch.tensor(X_num)
         X_num = torch.nan_to_num(X_num, nan=0)
         data_batch.x_num = X_num
@@ -290,10 +311,10 @@ class YateGNNRegressor(RegressorMixin, BaseYateGNNEstimator):
         batch_size: int = 128,
         val_size: float = 0.1,
         num_model: int = 10,
-        max_epoch: int = 200,
+        max_epoch: int = 300,
         early_stopping_patience: Union[None, int] = 40,
         n_jobs: int = 1,
-        device="cpu",
+        device: str = "cpu",
         random_state: int = 0,
         disable_pbar: bool = True,
     ):
@@ -321,9 +342,7 @@ class YateGNNRegressor(RegressorMixin, BaseYateGNNEstimator):
 
         if self.include_numeric:
             # Transform numericals
-            # X_total = self.X_ + X
             X = self._transform_numerical(X)
-            # X = X[len(self.X_) :]
 
         # Obtain the batch to feed into the network
         ds_predict_eval = self._set_data_eval(data=X)
@@ -342,6 +361,7 @@ class YateGNNRegressor(RegressorMixin, BaseYateGNNEstimator):
             self.criterion_ = torch.nn.L1Loss()
 
         self.output_dim_ = 1
+        self.tol_ = 1.85
         self.model_task_ = "regression"
 
 
@@ -364,10 +384,10 @@ class YateGNNClassifier(ClassifierMixin, BaseYateGNNEstimator):
         batch_size: int = 128,
         val_size: float = 0.1,
         num_model: int = 10,
-        max_epoch: int = 200,
+        max_epoch: int = 300,
         early_stopping_patience: Union[None, int] = 40,
         n_jobs: int = 1,
-        device="cpu",
+        device: str = "cpu",
         random_state: int = 0,
         disable_pbar: bool = True,
     ):
@@ -402,12 +422,16 @@ class YateGNNClassifier(ClassifierMixin, BaseYateGNNEstimator):
         check_is_fitted(self, "is_fitted_")
         return self._get_predict_prob(X)
 
+    def decision_function(self, X):
+        decision = self.predict_proba(X)
+        if decision.shape[1] == 1:
+            decision = decision.ravel()
+        return decision
+
     def _get_predict_prob(self, X):
         if self.include_numeric:
             # Transform numericals
-            # X_total = self.X_ + X
             X = self._transform_numerical(X)
-            # X = X[len(self.X_) :]
 
         # Obtain the batch to feed into the network
         ds_predict_eval = self._set_data_eval(data=X)
@@ -434,4 +458,6 @@ class YateGNNClassifier(ClassifierMixin, BaseYateGNNEstimator):
             self.output_dim_ -= 1
             self.criterion_ = torch.nn.BCEWithLogitsLoss()
 
+        self.classes_ = np.unique(self.y_)
+        self.tol_ = 1.85
         self.model_task_ = "classification"
