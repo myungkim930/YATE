@@ -6,7 +6,6 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim import AdamW, Adam, SGD
 from skorch.callbacks import WandbLogger
 import sys
-
 sys.path.append("")
 from baselines.resnet_model import ResNet, InputShapeSetterResnet
 from skorch.callbacks import Callback, Checkpoint
@@ -37,7 +36,6 @@ class NeuralNetRegressorBis(NeuralNetRegressor):
         if y.ndim == 1:
             y = y.reshape(-1, 1)
         return super().fit(X, y)
-
     def on_train_begin(self, net, X, y):
         self.training = True
         for callback in self.callbacks_:
@@ -66,7 +64,6 @@ class NeuralNetClassifierBis(NeuralNetClassifier):
     def fit(self, X, y):
         y = y.astype(np.int64)
         return super().fit(X, y)
-
     def on_train_begin(self, net, X, y):
         print("on train begin")
         self.training = True
@@ -95,10 +92,6 @@ class NeuralNetClassifierBis(NeuralNetClassifier):
 def create_resnet_regressor_skorch(
     id=None, wandb_run=None, use_checkpoints=True, cat_features=None, **kwargs
 ):
-    # if id is None:
-    # generate id at random
-    #   id = np.random.randint(0, 1000000)
-    #   print("id is None, generated id is {}".format(id))
     print("resnet regressor")
     if "lr_scheduler" not in kwargs:
         print("no lr scheduler")
@@ -190,10 +183,6 @@ def create_resnet_regressor_skorch(
 def create_resnet_classifier_skorch(
     id=None, wandb_run=None, use_checkpoints=True, cat_features=None, **kwargs
 ):
-    # if id is None:
-    # generate id at random
-    #   id = np.random.randint(0, 1000000)
-    #   print("id is None, generated id is {}".format(id))
     print("resnet classifier")
     if "lr_scheduler" not in kwargs:
         print("no lr scheduler")
