@@ -65,7 +65,6 @@ class NeuralNetClassifierBis(NeuralNetClassifier):
         y = y.astype(np.int64)
         return super().fit(X, y)
     def on_train_begin(self, net, X, y):
-        print("on train begin")
         self.training = True
         for callback in self.callbacks_:
             if isinstance(callback[1], UniquePrefixCheckpoint):

@@ -103,6 +103,12 @@ def _run_model(
             name_col.str.replace("<", "").str.replace(">", "").str.replace("_", " ").str.lower()
         )
         data_fasttext["name"] = name_col
+        # same for data_pd
+        name_col = data_pd["name"]
+        name_col = (
+            name_col.str.replace("<", "").str.replace(">", "").str.replace("_", " ").str.lower()
+        )
+        data_pd["name"] = name_col
         #TODO check
         data = pd.merge(
             data_pd[["name", target_name]], data_fasttext, how="inner", on="name"
@@ -124,7 +130,7 @@ def _run_model(
     # Preprocess data with splits
     stratify = None
     if task == "classification":
-        stratify = data_pd[target_name]
+        stratify = data[target_name]
 
     if "yate-gnn" in preprocess_method:
         X_train, X_test, y_train, y_test = _prepare_yate_gnn(
@@ -164,11 +170,11 @@ def _run_model(
             random_state,
             stratify,
         )
-    elif "mlp" in preprocess_method:
+    elif "mlp" in estim_method:
         X_train, X_test, y_train, y_test = _prepare_mlp(
             data, target_name, num_train, random_state, stratify
         )
-    elif "resnet" in preprocess_method:
+    elif "resnet" in estim_method:
         X_train, X_test, y_train, y_test = _prepare_resnet(
             data,
             target_name,
@@ -176,14 +182,6 @@ def _run_model(
             num_train,
             random_state,
             stratify,
-        )
-    elif "resnet" in preprocess_method:
-        X_train, X_test, y_train, y_test = _prepare_resnet(
-            data,
-            target_name,
-            cat_col_names,
-            num_train,
-            random_state,
         )
     else:
         X_train, X_test, y_train, y_test = _set_split(
@@ -198,15 +196,6 @@ def _run_model(
         y_train = y_train.astype(np.float32)
         y_test = y_test.astype(np.float32)
 
-    # if "resnet" in estim_method:
-    #     print("convert to numpy")
-    #     if isinstance(X_train, pd.DataFrame):
-    #         X_train = X_train.to_numpy().astype(np.float32)
-    #     if isinstance(X_test, pd.DataFrame):
-    #         X_test = X_test.to_numpy().astype(np.float32)
-    #     y_train = y_train.astype(np.float32)
-    #     y_test = y_test.astype(np.float32)
-
     # convert to numpy
     # fasttext_resnet doesn't work otherwise
     # but I don't understand why...
@@ -218,7 +207,6 @@ def _run_model(
             X_test = X_test.to_numpy().astype(np.float32)
         y_train = y_train.astype(np.float32)
         y_test = y_test.astype(np.float32)
-
 
     # Set cross-validation settings
     if "yate-gnn" in method:
@@ -345,6 +333,7 @@ def _run_model(
             refit=refit,
             n_jobs=n_jobs,
             error_score="raise",
+            verbose=100,
         )
     elif "tabpfn" in method:
         hyperparameter_search = estimator
@@ -606,40 +595,6 @@ def _prepare_catboost(
         stratify=stratify,
     )
     return np.array(X_train), np.array(X_test), np.array(y_train), np.array(y_test)
-
-def _prepare_resnet(data_pd, target_name, cat_col_names, num_train, random_state):
-    data = data_pd.copy()
-    X_train, X_test, y_train, y_test = _set_split(
-        data,
-        target_name,
-        num_train,
-        random_state=random_state,
-    )
-    numerical_preprocessor = Pipeline([
-        ('power_transform', PowerTransformer()),
-        ('imputer', SimpleImputer(strategy='mean')),
-    ])
-    categorical_preprocessor = Pipeline([
-        ('imputer', SimpleImputer(strategy='most_frequent')),
-        ('encoder', OrdinalEncoder(handle_unknown='use_encoded_value', unknown_value=-1)),
-    ])
-    print("cat cols", cat_col_names)
-    print("num cols", [col for col in X_train.columns if col not in cat_col_names])
-    preprocessor = ColumnTransformer([
-        ('numerical', numerical_preprocessor, [col for col in X_train.columns if col not in cat_col_names]),
-        ('categorical', categorical_preprocessor, cat_col_names),
-    ])
-    X_train = preprocessor.fit_transform(X_train, y=y_train)
-    X_test = preprocessor.transform(X_test)
-
-    #TODO export categories to the main thing
-    # and use them here
-
-
-    return (np.array(X_train).astype(np.float32), 
-            np.array(X_test).astype(np.float32), 
-            np.array(y_train).astype(np.float32), 
-            np.array(y_test).astype(np.float32))
 
 
 def _prepare_mlp(data_pd, target_name, num_train, random_state, stratify):
