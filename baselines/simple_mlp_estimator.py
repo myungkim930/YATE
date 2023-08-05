@@ -9,7 +9,7 @@ from sklearn.utils.validation import check_is_fitted, check_random_state
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from joblib import Parallel, delayed
-from model import SimpleMLP
+from model._simple_mlp import SimpleMLP
 
 
 class TabularDataset(Dataset):

@@ -22,6 +22,8 @@ from sklearn.metrics import (
 from sklearn.ensemble import (
     HistGradientBoostingRegressor,
     HistGradientBoostingClassifier,
+    GradientBoostingClassifier,
+    GradientBoostingRegressor
 )
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
@@ -37,6 +39,11 @@ from catboost import CatBoostRegressor, CatBoostClassifier
 from downstream import YateGNNRegressor, YateGNNClassifier
 from utils import load_config
 from scipy.stats import loguniform, lognorm, randint, uniform, norm
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+import platform
+import os
+
 
 
 # Run evaluation
@@ -56,13 +63,13 @@ def _run_model(
     print(f"Running on node: {node_name}")
     print(f"Processor: {processor}")
     print(f"Number of cpus on node: {n_cpus_on_node}")
-
     # Load data
     data_pd, data_additional = _load_data(data_name, config)
 
     # Basic settings
     target_name = data_additional["target_name"]
     task = data_additional["task"]
+    print("task is {}".format(task))
     scoring, result_criterion = _set_score_criterion(task)
 
     # Set methods
@@ -89,11 +96,33 @@ def _run_model(
             data.drop(columns=num_col_names, inplace=True)
         data = pd.concat([data, data_pd[target_name]], axis=1)
     elif "fasttext" in preprocess_method:
-        data = data_additional["fasttext"].copy()
+        data_fasttext = data_additional["fasttext"].copy()
+        #TODO: move this into a function
+        name_col = data_fasttext["name"]
+        name_col = (
+            name_col.str.replace("<", "").str.replace(">", "").str.replace("_", " ").str.lower()
+        )
+        data_fasttext["name"] = name_col
+        # same for data_pd
+        name_col = data_pd["name"]
+        name_col = (
+            name_col.str.replace("<", "").str.replace(">", "").str.replace("_", " ").str.lower()
+        )
+        data_pd["name"] = name_col
+        #TODO check
+        data = pd.merge(
+            data_pd[["name", target_name]], data_fasttext, how="inner", on="name"
+        )
         data.drop(columns="name", inplace=True)
-        data = pd.concat([data, data_pd[target_name]], axis=1)
-        cat_col_names.remove("name")
+        # edit cat_col_names
+        #TODO: change this when we don't drop orginal columns
+        # now all columns are numeric
         cat_col_names = []
+        num_col_names = data.columns.tolist()
+        # remove target
+        if target_name in num_col_names:
+            num_col_names.remove(target_name)
+        print(f"Proporation of missing values: {data.isna().sum().sum() / data.size}")
     else:
         print("No fasttext or lm model is specified.")
         data = data_pd.copy()
@@ -101,7 +130,7 @@ def _run_model(
     # Preprocess data with splits
     stratify = None
     if task == "classification":
-        stratify = data_pd[target_name]
+        stratify = data[target_name]
 
     if "yate-gnn" in preprocess_method:
         X_train, X_test, y_train, y_test = _prepare_yate_gnn(
@@ -141,11 +170,11 @@ def _run_model(
             random_state,
             stratify,
         )
-    elif "mlp" in preprocess_method:
+    elif "mlp" in estim_method:
         X_train, X_test, y_train, y_test = _prepare_mlp(
             data, target_name, num_train, random_state, stratify
         )
-    elif "resnet" in preprocess_method:
+    elif "resnet" in estim_method:
         X_train, X_test, y_train, y_test = _prepare_resnet(
             data,
             target_name,
@@ -167,14 +196,17 @@ def _run_model(
         y_train = y_train.astype(np.float32)
         y_test = y_test.astype(np.float32)
 
-    # if "resnet" in estim_method:
-    #     print("convert to numpy")
-    #     if isinstance(X_train, pd.DataFrame):
-    #         X_train = X_train.to_numpy().astype(np.float32)
-    #     if isinstance(X_test, pd.DataFrame):
-    #         X_test = X_test.to_numpy().astype(np.float32)
-    #     y_train = y_train.astype(np.float32)
-    #     y_test = y_test.astype(np.float32)
+    # convert to numpy
+    # fasttext_resnet doesn't work otherwise
+    # but I don't understand why...
+    if "resnet" in estim_method:
+        print("convert to numpy")
+        if isinstance(X_train, pd.DataFrame):
+            X_train = X_train.to_numpy().astype(np.float32)
+        if isinstance(X_test, pd.DataFrame):
+            X_test = X_test.to_numpy().astype(np.float32)
+        y_train = y_train.astype(np.float32)
+        y_test = y_test.astype(np.float32)
 
     # Set cross-validation settings
     if "yate-gnn" in method:
@@ -189,9 +221,10 @@ def _run_model(
     )
 
     # Set estimator
-    if "catboost" in estim_method:
-        data_x = data.drop(columns=[target_name])
-        cat_features = [data_x.columns.get_loc(i) for i in cat_col_names]
+    if "catboost" in estim_method or "resnet" in estim_method:
+        #TODO check that it works when dealing with both numeric and categorical
+        cols = [col for col in data.columns if col != target_name]
+        cat_features = [cols.index(col) for col in cat_col_names]
     else:
         cat_features = None
     if "resnet" in estim_method:
@@ -285,6 +318,9 @@ def _run_model(
             scoring=scoring,
             refit=refit,
             n_jobs=n_jobs,
+            verbose=100,
+            # raise error when there is a warning
+            error_score="raise",
         )
     elif "resnet" in method:
         n_iter, refit, n_jobs = 100, True, -1
@@ -297,6 +333,7 @@ def _run_model(
             refit=refit,
             n_jobs=n_jobs,
             error_score="raise",
+            verbose=100,
         )
     elif "tabpfn" in method:
         hyperparameter_search = estimator
@@ -676,6 +713,11 @@ def _assign_estimator(
             estimator = SimpleMLPRegressor()
         else:
             estimator = SimpleMLPClassifier()
+    elif estim_method == "gb":
+        if task == "regression":
+            estimator = GradientBoostingRegressor()
+        else:
+            estimator = GradientBoostingClassifier()
     elif estim_method == "resnet":
         if task == "regression":
             estimator = create_resnet_regressor_skorch(
@@ -714,7 +756,8 @@ def _set_param_distributions(estim_method: str, num_train: int):
         param_distributions["l2_leaf_reg"] = loguniform(1, 10)
         param_distributions["bagging_temperature"] = uniform(0, 1)
         param_distributions["iterations"] = randint(400, 1001)
-    elif estim_method == "histgb":
+    elif estim_method == "histgb" or estim_method == "gb":
+        param_distributions["loss"] = ["squared_error", "absolute_error"]
         param_distributions["learning_rate"] = loguniform(1e-2, 10)
         param_distributions["max_depth"] = [None, 2, 3, 4]
         param_distributions["max_leaf_nodes"] = norm_int(31, 5)
@@ -788,7 +831,7 @@ def _set_score_criterion(task):
         score_criterion = ["r2", "rmse"]
     else:
         scoring = "roc_auc"
-        score_criterion = ["auc", "avg_precision"]
+        score_criterion = ["roc_auc", "avg_precision"]
     score_criterion += ["run_time"]
     return scoring, score_criterion
 

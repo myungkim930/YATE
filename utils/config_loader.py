@@ -19,6 +19,7 @@ def load_config():
         "pretrained_model_dir"
     ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_num_pretrained_CS.pt"
 
+
     config["comparing_methods"] = [
         "yate-gnn",
         "catboost",
