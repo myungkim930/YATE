@@ -1,6 +1,6 @@
 """
 Temporary python script for loading configs
-Subject to change later
+Subject to change
 """
 
 
@@ -12,48 +12,41 @@ def load_config():
     config[
         "ken_embed_dir"
     ] = "/data/parietal/store3/work/jstojano/gitlab/alexis_cvetkov/KEN/experiments/embedding_visualization/emb_mure_yago3_2022_full.parquet"
-
     config["data_ds_dir"] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/ds_data/"
     config["data_kg_dir"] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/kg_data/"
-    config[
-        "data_eval_ds_dir"
-    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/eval_ds_data/"
-    config[
-        "data_eval_jl_dir"
-    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/eval_jl_data/"
-    config[
-        "data_eval_kg_dir"
-    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/eval_kg_data/"
-    config[
-        "hyperopt_log_dir"
-    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/hyperopt_log/"
     config["results_dir"] = "/data/parietal/store3/work/mkim/gitlab/YATE/results/"
-
     config[
         "pretrained_model_dir"
-    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_2007_NB128_NH1_NP1_MN100_CL/ckpt_step190000.pt"
+    ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_num_pretrained_CS.pt"
+
+    config["comparing_methods"] = [
+        "yate-gnn",
+        "catboost",
+        "tablevectorizer_histgb",
+        "tablevectorizer-ken_histgb",
+        "lm-roberta_histgb",
+        "fasttext_histgb",
+        "fasttext_resnet",
+        "resnet",
+        "fasttext_mlp",
+        "mlp",
+        "tabpfn",
+    ]
+    return config
+
     # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_pretrained_MS.pt
-    # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_num_pretrained_CS.pt
+    # /data/parietal/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_num_pretrained_CS.pt
     # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_num_pretrained_MS.pt
     # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_pretrained_CS.pt
     # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_2705_NB128_NH2_NP1_MN100_CL/ckpt_step86000.pt
     # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_2705_NB256_NH2_NP1_MN100_CL/ckpt_step15000.pt
     # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_3105_NB512_NH2_NP1_MN100_CL/ckpt_step7000.pt
-    # /data/parietal/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_2007_NB128_NH1_NP1_MN100_CL/ckpt_step190000.pt
-    # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_2107_NB128_NH2_NL1_NP1_MN100_CL/ckpt_step90000.pt
-    # /storage/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_2107_NB128_NH1_NL0_NP1_MN100_CL/ckpt_step228000.pt
+    # /data/parietal/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_2007_NB128_NH1_NP1_MN100_CL/ckpt_step290000.pt
+    # /data/parietal/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_2107_NB128_NH2_NL1_NP1_MN100_CL/ckpt_step150000.pt
+    # /data/parietal/store3/work/mkim/gitlab/YATE/data/saved_model/yago3_2022_2107_NB128_NH1_NL0_NP1_MN100_CL/ckpt_step393000.pt
 
-    config["comparing_methods"] = [
-        "yate-gnn",
-        "yate-feature-initial_histgb",
-        "yate-feature-pretrained_histgb",
-        "tablevectorizer_histgb",
-        "tablevectorizer_ken_histgb",
-        "catboost",
-        "lm-roberta_histgb",
-        "fasttext_histgb",
-        "tabpfn",
-    ]
+    # "yate-feature-initial_histgb",
+    # "yate-feature-pretrained_histgb",
 
     # "lm-fasttext_histgb",
     # "tablevectorizer_fasttext_histgb",
@@ -180,5 +173,15 @@ def load_config():
     #         hp.uniform("leaf_estimation_iterations", 1, 20)
     #     ),
     # }
-
-    return config
+    # config[
+    #     "data_eval_ds_dir"
+    # ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/eval_ds_data/"
+    # config[
+    #     "data_eval_jl_dir"
+    # ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/eval_jl_data/"
+    # config[
+    #     "data_eval_kg_dir"
+    # ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/eval_kg_data/"
+    # config[
+    #     "hyperopt_log_dir"
+    # ] = "/data/parietal/store3/work/mkim/gitlab/YATE/data/hyperopt_log/"
