@@ -70,6 +70,7 @@ def _run_model(
     target_name = data_additional["target_name"]
     task = data_additional["task"]
     print("task is {}".format(task))
+    print("include_numeric is {}".format(include_numeric))
     scoring, result_criterion = _set_score_criterion(task)
 
     # Set methods
@@ -127,6 +128,7 @@ def _run_model(
         print("No fasttext or lm model is specified.")
         data = data_pd.copy()
 
+    cat_features = None #overriden by prepare_... functions if needed
     # Preprocess data with splits
     stratify = None
     if task == "classification":
@@ -162,7 +164,7 @@ def _run_model(
             stratify,
         )
     elif "catboost" in preprocess_method:
-        X_train, X_test, y_train, y_test = _prepare_catboost(
+        X_train, X_test, y_train, y_test, cat_features = _prepare_catboost(
             data,
             target_name,
             cat_col_names,
@@ -175,7 +177,7 @@ def _run_model(
             data, target_name, num_train, random_state, stratify
         )
     elif "resnet" in estim_method:
-        X_train, X_test, y_train, y_test = _prepare_resnet(
+        X_train, X_test, y_train, y_test, cat_features = _prepare_resnet(
             data,
             target_name,
             cat_col_names,
@@ -220,18 +222,12 @@ def _run_model(
         num_train,
     )
 
-    # Set estimator
-    if "catboost" in estim_method or "resnet" in estim_method:
-        #TODO check that it works when dealing with both numeric and categorical
-        cols = [col for col in data.columns if col != target_name]
-        cat_features = [cols.index(col) for col in cat_col_names]
-    else:
-        cat_features = None
     if "resnet" in estim_method:
         # +1 for unknown category
         categories = [len(pd.unique(data[col])) + 1 for col in cat_col_names]
     else:
         categories = None
+
     estimator = _assign_estimator(
         estim_method,
         task,
@@ -594,7 +590,9 @@ def _prepare_catboost(
         random_state=random_state,
         stratify=stratify,
     )
-    return np.array(X_train), np.array(X_test), np.array(y_train), np.array(y_test)
+    # index of categorical columns
+    cat_features = [X_train.columns.get_loc(col) for col in cat_col_names]
+    return np.array(X_train), np.array(X_test), np.array(y_train), np.array(y_test), cat_features
 
 
 def _prepare_mlp(data_pd, target_name, num_train, random_state, stratify):
@@ -659,15 +657,17 @@ def _prepare_resnet(
     )
     X_train = preprocessor.fit_transform(X_train, y=y_train)
     X_test = preprocessor.transform(X_test)
+    
+    # index of categorical columns
+    cat_features = [X_train.shape[1] - len(cat_col_names) + i for i in range(len(cat_col_names))]
 
-    # TODO export categories to the main thing
-    # and use them here
 
     return (
         np.array(X_train).astype(np.float32),
         np.array(X_test).astype(np.float32),
         np.array(y_train).astype(np.float32),
         np.array(y_test).astype(np.float32),
+        cat_features
     )
 
 
