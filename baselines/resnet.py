@@ -99,9 +99,13 @@ def create_resnet_regressor_skorch(
         print("lr scheduler")
         lr_scheduler = kwargs.pop("lr_scheduler")
     if "es_patience" not in kwargs.keys():
-        es_patience = 40
+        es_patience = 16
     else:
         es_patience = kwargs.pop("es_patience")
+    if "max_epochs" not in kwargs.keys():
+        max_epochs = 100
+    else:
+        max_epochs = kwargs.pop("max_epochs")
     if "lr_patience" not in kwargs.keys():
         lr_patience = 30
     else:
@@ -161,6 +165,7 @@ def create_resnet_regressor_skorch(
     model = NeuralNetRegressorBis(
         ResNet,
         # Shuffle training data on each epoch
+        max_epochs=max_epochs,
         optimizer=optimizer,
         batch_size=max(
             batch_size, 1
@@ -190,9 +195,13 @@ def create_resnet_classifier_skorch(
         print("lr scheduler")
         lr_scheduler = kwargs.pop("lr_scheduler")
     if "es_patience" not in kwargs.keys():
-        es_patience = 40
+        es_patience = 16
     else:
         es_patience = kwargs.pop("es_patience")
+    if "max_epochs" not in kwargs.keys():
+        max_epochs = 100
+    else:
+        max_epochs = kwargs.pop("max_epochs")
     if "lr_patience" not in kwargs.keys():
         lr_patience = 30
     else:
@@ -250,6 +259,7 @@ def create_resnet_classifier_skorch(
     model = NeuralNetClassifierBis(
         ResNet,
         # Shuffle training data on each epoch
+        max_epochs=max_epochs,
         criterion=nn.CrossEntropyLoss,
         optimizer=optimizer,
         batch_size=max(
