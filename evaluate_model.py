@@ -795,8 +795,6 @@ def _set_param_distributions(estim_method: str, num_train: int):
             # "module__d_embedding": randint(64, 513),  # equivalent to q_uniform(64, 512)
             "module__d_embedding": randint(32, 513),
             # "lr_scheduler": [True, False]  # two possible values
-            "max_epochs": 100,
-            "es_patience": 16,
         }
     else:
         pass
