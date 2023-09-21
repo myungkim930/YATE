@@ -24,11 +24,28 @@ class LearningRateLogger(Callback):
 
 
 class UniquePrefixCheckpoint(Checkpoint):
+    """
+    This class has two purposes:
+    - add a unique prefix to the checkpoint file to avoid
+    conflicts between different runs in parallel
+    - remove the checkpoint file when training is finished
+    to avoid having too many files
+    """
     def initialize(self):
         print("Initializing UniquePrefixCheckpoint")
         self.fn_prefix = str(id(self))
         print("fn_prefix is {}".format(self.fn_prefix))
         return super(UniquePrefixCheckpoint, self).initialize()
+    # override method to delete the checkpoint file
+    def on_train_end(self, net, **kwargs):
+        if not self.load_best or self.monitor is None:
+            return
+        self._sink("Loading best checkpoint after training.", net.verbose)
+        net.load_params(checkpoint=self, use_safetensors=self.use_safetensors)
+        # addition
+        print(f"removing skorch_cp/{self.fn_prefix}params.pt")
+        os.remove(f"skorch_cp/{self.fn_prefix}params.pt")
+
 
 
 class NeuralNetRegressorBis(NeuralNetRegressor):
@@ -36,56 +53,12 @@ class NeuralNetRegressorBis(NeuralNetRegressor):
         if y.ndim == 1:
             y = y.reshape(-1, 1)
         return super().fit(X, y)
-    def on_train_begin(self, net, X, y):
-        self.training = True
-        for callback in self.callbacks_:
-            if isinstance(callback[1], UniquePrefixCheckpoint):
-                callback[1].fn_prefix += str(np.random.randint(0, 1000000))
-
-    def on_train_end(self, net, X, y):
-        self.training = False
-
-    def predict(self, X):
-        y_pred = super().predict(X)
-        # remove the checkpoint file if it exist
-        # after the prediction
-        # this could be done at the end of the training
-        # but we want to do it after load_best
-        if not self.training:
-            for callback in self.callbacks_:
-                if isinstance(callback[1], UniquePrefixCheckpoint):
-                    fn_prefix = callback[1].fn_prefix
-                    print(f"removing skorch_cp/{fn_prefix}params.pt")
-                    os.remove(f"skorch_cp/{fn_prefix}params.pt")
-        return y_pred
 
 
 class NeuralNetClassifierBis(NeuralNetClassifier):
     def fit(self, X, y):
         y = y.astype(np.int64)
         return super().fit(X, y)
-    def on_train_begin(self, net, X, y):
-        self.training = True
-        for callback in self.callbacks_:
-            if isinstance(callback[1], UniquePrefixCheckpoint):
-                callback[1].fn_prefix += str(np.random.randint(0, 1000000))
-
-    def on_train_end(self, net, X, y):
-        self.training = False
-
-    def predict(self, X):
-        y_pred = super().predict(X)
-        # remove the checkpoint file if it exist
-        # after the prediction
-        # this could be done at the end of the training
-        # but we want to do it after load_best
-        if not self.training:
-            for callback in self.callbacks_:
-                if isinstance(callback[1], UniquePrefixCheckpoint):
-                    fn_prefix = callback[1].fn_prefix
-                    print(f"removing skorch_cp/{fn_prefix}params.pt")
-                    os.remove(f"skorch_cp/{fn_prefix}params.pt")
-        return y_pred
 
 
 def create_resnet_regressor_skorch(
