@@ -8,7 +8,6 @@ dependencies:
   - ca-certificates
   - openssl
   - pytorch
-  - skorch
   - certifi
   - jupyter
   - openml
@@ -21,4 +20,4 @@ dependencies:
       - tabpfn==0.1.9
       - torch-geometric==2.3.1
       - torch-scatter==2.1.1
-prefix: /Users/leo/mambaforge/envs/yate
+      - skorch==0.15.0
